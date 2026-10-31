@@ -1,0 +1,18 @@
+# VideoDetect — navegador y gestor de descargas Android
+
+Aplicación Android nativa experimental para detectar fuentes multimedia mientras navegas. Interfaz con pestañas **Navegador** y **Descargas**, inspección de elementos HTML5, detección de solicitudes MP4/WebM/HLS/DASH, bloqueo básico de dominios publicitarios y ventanas emergentes.
+
+## Compilación
+El workflow de GitHub Actions **Build Android APK** se ejecuta una vez por push a main (y también manualmente). Genera un APK de depuración firmado con la clave estándar de debug como artifact `VideoDetect-debug-apk`. Requiere Android SDK y JDK 17.
+
+## Alcance de v0.1
+- MP4/WebM directos: descarga mediante DownloadManager.
+- HLS (`.m3u8`) y DASH (`.mpd`): detección y listado, pero no se promete combinar fragmentos ni descargarlos como un MP4.
+- Fuentes cargadas por JavaScript: observación de solicitudes y etiquetas de video dentro del WebView.
+- No evade DRM, autenticación, URLs firmadas caducadas ni controles de acceso.
+- Bloqueo publicitario por lista mínima local de hostnames; necesita ampliación, actualizaciones y pruebas para producción.
+- Los enlaces `blob:` no son archivos directamente descargables. En esos casos deben detectarse solicitudes de red subyacentes si son visibles.
+- No reproduce necesariamente todas las funcionalidades del APK de referencia.
+
+## Pruebas pendientes
+Validar en un dispositivo físico y con páginas de prueba autorizadas. Los reproductores embebidos y sitios que usen mecanismos personalizados pueden requerir reglas específicas. No se ha realizado aún una prueba de ejecución en dispositivo.
