@@ -34,6 +34,10 @@ public final class MediaDiagnostics {
     private final Set<String> seen=new HashSet<>();
     // An unrelated advertisement iframe must not receive capture session data.
     private final Set<String> mseOrigins=java.util.Collections.synchronizedSet(new HashSet<>());
+    private final Set<String> qualityCandidates=new java.util.LinkedHashSet<>();
+    public synchronized Set<String> qualityCandidates(){
+        return new java.util.LinkedHashSet<>(qualityCandidates);
+    }
     private final Handler main=new Handler(Looper.getMainLooper());
     private boolean frameSupported=false;
     private boolean scriptSupported=false;
@@ -153,7 +157,7 @@ public final class MediaDiagnostics {
                                        capture.onMessage(obj,sourceOrigin,replyProxy);
                                    return;
                                }
-                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|capture-init|capture-ready|capture-wait|quality-attempt|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
+                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|capture-init|capture-ready|capture-wait|capture-integrity|quality-offered|quality-attempt|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
                                String value=obj.optString("url","");
                                String detail=obj.optString("detail","");
                                if(value.length()>2100||detail.length()>120)return;
@@ -161,6 +165,13 @@ public final class MediaDiagnostics {
                                event(kind.toUpperCase(Locale.ROOT),value,
                                   (isMainFrame?"principal":"iframe")+" "+origin+" "+detail);
                                if("frame".equals(kind))frames++;
+                               if("quality-offered".equals(kind)&&detail.matches("(240|360|480|720|1080|1440|2160)p")){
+                                   synchronized(this){qualityCandidates.add(detail);}
+                               }
+                               if("capture-integrity".equals(kind)&&capture!=null
+                                       && sourceOrigin!=null && mseOrigins.contains(sourceOrigin.toString())){
+                                   capture.onIntegrityEvent(detail);
+                               }
                                if(capture!=null && (kind.equals("capture-ready")||kind.equals("capture-wait"))){
                                    if(sourceOrigin!=null && "moviekh.xtremestream.xyz".equalsIgnoreCase(sourceOrigin.getHost()))
                                        capture.onQualitySignal(kind,detail);
@@ -219,7 +230,7 @@ public final class MediaDiagnostics {
         String low=url.toLowerCase(Locale.ROOT);
         return low.contains("/player/index.php")||low.contains("/embed/");
     }
-    public void clear(){ synchronized(this){events.clear();seen.clear();mediaHits=0;segmentHits=0;streams.clear();frames=0;nativeHits=0;errors=0;
+    public void clear(){ synchronized(this){events.clear();seen.clear();mediaHits=0;segmentHits=0;streams.clear();qualityCandidates.clear();frames=0;nativeHits=0;errors=0;
            mseBuffers=0;encryptedSignals=0;renderedSizes.clear();observedCodecs.clear();
            fetchResponses=0;mseAppendSamples=0;observedResponses.clear();} }
     private void event(String type,String url,String detail){
@@ -254,6 +265,7 @@ public final class MediaDiagnostics {
           "\nRespuestas CDN: "+fetchResponses+" · Muestras appendBuffer: "+mseAppendSamples+
           "\nCabeceras observadas: "+observedResponses+
           "\nResoluciones observadas: "+renderedSizes+
+          "\nCalidades ofrecidas en controles: "+qualityCandidates+
           "\nCodecs MSE: "+observedCodecs+
           "\nMonitor de iframes: "+(scriptSupported?"activo":"no disponible en este WebView");
     }
@@ -266,7 +278,7 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.12 (prueba)\n")
+           .append("Versión: 0.13 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")

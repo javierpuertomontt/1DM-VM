@@ -456,6 +456,32 @@ public class MainActivity extends Activity {
         options.addView(button("Buscar más",true,()->show(0)),new LinearLayout.LayoutParams(0,-2,1));
         holder.addView(options);gap(holder,14);
         java.util.List<MediaDiagnostics.StreamGroup> detectedStreams=diagnostics.streamGroups();
+        boolean playerFound=false;
+        for(Media m:media.values())if("Reproductor".equals(m.type))playerFound=true;
+        if(playerFound){
+            LinearLayout info=vertical();
+            info.setPadding(d(15),d(15),d(15),d(15));
+            info.setBackground(rounded(CARD,14,LINE));
+            info.addView(text("Calidad del reproductor",17,WHITE,true));gap(info,8);
+            java.util.Set<String> offered=diagnostics.qualityCandidates();
+            java.util.Set<String> fetched=new java.util.HashSet<>();
+            for(MediaDiagnostics.StreamGroup group:detectedStreams)fetched.add(group.quality+"p");
+            for(String q:new String[]{"1080p","720p","480p"}){
+                String state=fetched.contains(q)?"Solicitada por el sitio":
+                   offered.contains(q)?"Anunciada en el menú; no descargada":"Pendiente: reproducir y elegir "+q;
+                info.addView(text(q+" · "+state,13,fetched.contains(q)?ACCENT:MUTED,false));
+                gap(info,6);
+            }
+            info.addView(text("La aplicación no puede confirmar 1080p antes de que la página lo anuncie o solicite sus fragmentos.",12,MUTED,false));
+            gap(info,12);
+            info.addView(button("Elegir calidad y capturar",true,()->{
+                if(capture.isBusy()){
+                    Toast.makeText(this,"Detén primero la captura",Toast.LENGTH_SHORT).show();return;
+                }
+                show(0);showQualityChoice("1080");
+            }));
+            holder.addView(info);gap(holder,14);
+        }
         if(!detectedStreams.isEmpty()){
             holder.addView(text("TRANSMISIONES SEGMENTADAS",13,ACCENT,true));
             gap(holder,8);
