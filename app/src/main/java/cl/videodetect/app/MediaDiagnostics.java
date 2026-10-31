@@ -32,6 +32,8 @@ public final class MediaDiagnostics {
     private final MseCaptureManager capture;
     private final ArrayDeque<String> events=new ArrayDeque<>();
     private final Set<String> seen=new HashSet<>();
+    // An unrelated advertisement iframe must not receive capture session data.
+    private final Set<String> mseOrigins=java.util.Collections.synchronizedSet(new HashSet<>());
     private final Handler main=new Handler(Looper.getMainLooper());
     private boolean frameSupported=false;
     private boolean scriptSupported=false;
@@ -136,7 +138,9 @@ public final class MediaDiagnostics {
                            if(body.length()>3500){
                                if(body.length()>21000 || !body.startsWith("{\"kind\":\"capture-chunk\""))return;
                                try{
-                                   if(capture!=null)capture.onMessage(new JSONObject(body),sourceOrigin,replyProxy);
+                                   if(capture!=null && sourceOrigin!=null &&
+                                           mseOrigins.contains(sourceOrigin.toString()))
+                                       capture.onMessage(new JSONObject(body),sourceOrigin,replyProxy);
                                }catch(Exception ignored){}
                                return;
                            }
@@ -144,7 +148,9 @@ public final class MediaDiagnostics {
                                JSONObject obj=new JSONObject(body);
                                String kind=obj.optString("kind","");
                                if(kind.equals("capture-poll")||kind.equals("capture-chunk")){
-                                   if(capture!=null)capture.onMessage(obj,sourceOrigin,replyProxy);
+                                   if(capture!=null && sourceOrigin!=null &&
+                                           mseOrigins.contains(sourceOrigin.toString()))
+                                       capture.onMessage(obj,sourceOrigin,replyProxy);
                                    return;
                                }
                                if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|capture-init|capture-ready|capture-wait|quality-attempt|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
@@ -160,6 +166,7 @@ public final class MediaDiagnostics {
                                        capture.onQualitySignal(kind,detail);
                                }
                                if("mse".equals(kind)){
+                                   if(sourceOrigin!=null)mseOrigins.add(sourceOrigin.toString());
                                    mseBuffers++;
                                    if(observedCodecs.size()<20)observedCodecs.add(detail);
                                }
