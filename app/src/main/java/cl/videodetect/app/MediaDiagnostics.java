@@ -128,7 +128,18 @@ public final class MediaDiagnostics {
                            Uri sourceOrigin,boolean isMainFrame,JavaScriptReplyProxy replyProxy){
                            if(message.getType()!=WebMessageCompat.TYPE_STRING)return;
                            String body=message.getData();
-                           if(body==null||body.length()>3500)return;
+                           if(body==null)return;
+                           // IMPORTANT: capture-chunk contains 12 KiB of binary data
+                           // encoded as ~16 KiB of Base64. The legacy 3,500-char
+                           // diagnostic limit silently discarded EVERY chunk.
+                           // Strictly bound capture messages separately.
+                           if(body.length()>3500){
+                               if(body.length()>21000 || !body.startsWith("{\"kind\":\"capture-chunk\""))return;
+                               try{
+                                   if(capture!=null)capture.onMessage(new JSONObject(body),sourceOrigin,replyProxy);
+                               }catch(Exception ignored){}
+                               return;
+                           }
                            try{
                                JSONObject obj=new JSONObject(body);
                                String kind=obj.optString("kind","");
@@ -136,7 +147,7 @@ public final class MediaDiagnostics {
                                    if(capture!=null)capture.onMessage(obj,sourceOrigin,replyProxy);
                                    return;
                                }
-                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
+                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
                                String value=obj.optString("url","");
                                String detail=obj.optString("detail","");
                                if(value.length()>2100||detail.length()>120)return;
@@ -243,7 +254,7 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.9 (prueba)\n")
+           .append("Versión: 0.10 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")

@@ -45,6 +45,8 @@ public final class MseCaptureManager {
     private static final int MAX_CHUNK_BASE64=26000;
     private volatile boolean stoppedPermanently=false;
     private int errorCount=0;
+    private volatile long polls=0,attemptedChunks=0,storedChunks=0,rejectedChunks=0;
+    private volatile String lastBridge="Sin comunicación del reproductor";
 
     public MseCaptureManager(Context ctx,Runnable onChange){
         this.context=ctx.getApplicationContext();this.onChange=onChange;
@@ -53,8 +55,17 @@ public final class MseCaptureManager {
     public boolean isCapturing(){return capturing;}
     public boolean isBusy(){return capturing||closing||exporting;}
     public String getStatus(){return status;}
-    public String getStats(){return String.format(java.util.Locale.ROOT,
-        "Audio: %.1f MB · Video: %.1f MB",audioBytes/1048576.0,videoBytes/1048576.0);}
+    public String getStats(){
+        return "Audio: "+displaySize(audioBytes)+" · Video: "+displaySize(videoBytes)+
+           "\nConexiones: "+polls+" · Fragmentos recibidos: "+attemptedChunks+
+           " · Guardados: "+storedChunks+" · Rechazados: "+rejectedChunks+
+           "\nPuente: "+lastBridge;
+    }
+    private static String displaySize(long bytes){
+        if(bytes<1024)return bytes+" B";
+        if(bytes<1048576)return String.format(java.util.Locale.ROOT,"%.1f KB",bytes/1024.0);
+        return String.format(java.util.Locale.ROOT,"%.2f MB",bytes/1048576.0);
+    }
     public Uri getSavedUri(){return savedUri;}
     public String getLastResult(){return lastResult;}
     public synchronized boolean start(){
@@ -63,6 +74,8 @@ public final class MseCaptureManager {
         capturing=true;closing=false;exporting=false;
         savedUri=null;lastResult="";errorCount=0;
         audioBytes=0;videoBytes=0;
+        polls=0;attemptedChunks=0;storedChunks=0;rejectedChunks=0;
+        lastBridge="Esperando conexión del reproductor";
         dir=new File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES),"mse-"+id);
         audioFile=new File(dir,"audio.fmp4");
         videoFile=new File(dir,"video.fmp4");
@@ -96,10 +109,15 @@ public final class MseCaptureManager {
     public void onMessage(JSONObject obj,Uri origin,JavaScriptReplyProxy reply){
         String kind=obj.optString("kind","");
         if("capture-poll".equals(kind)){
+            polls++;
+            if(origin!=null)lastBridge=origin.getHost()==null?"Marco sin host":origin.getHost();
+            if(polls==1||polls%10==0)update();
             replyState(reply);
             return;
         }
         if(!"capture-chunk".equals(kind))return;
+        attemptedChunks++;
+        if(attemptedChunks<=3||attemptedChunks%50==0)update();
         String session=obj.optString("session","");
         String media=obj.optString("track","");
         String payload=obj.optString("base64","");
@@ -109,6 +127,10 @@ public final class MseCaptureManager {
         if(!"https".equalsIgnoreCase(scheme)||!allowed||sequence<1||
           !session.equals(id)||!(capturing||closing)||
           payload.isEmpty()||payload.length()>MAX_CHUNK_BASE64){
+            rejectedChunks++;
+            lastBridge="Fragmento inválido: sesión="+session.equals(id)+
+              " estado="+(capturing||closing)+" origen="+scheme+" tamaño="+payload.length();
+            update();
             replyAck(reply,session,sequence,false);
             return;
         }
@@ -127,11 +149,11 @@ public final class MseCaptureManager {
                         if("audio".equals(media))audioBytes+=bytes.length;
                         else videoBytes+=bytes.length;
                     }
-                    okay=true;lastWrite.set(System.currentTimeMillis());
-                    if((audioBytes+videoBytes)%(1024*1024)<bytes.length)update();
+                    okay=true;storedChunks++;lastWrite.set(System.currentTimeMillis());
+                    if(storedChunks<=3||storedChunks%25==0)update();
                 }
             }catch(Exception e){
-                errorCount++;
+                errorCount++;rejectedChunks++;
                 if(errorCount==1){status="Error al guardar datos: "+e.getMessage();update();}
             }
             final boolean acknowledged=okay;
@@ -173,7 +195,7 @@ public final class MseCaptureManager {
         File temp=new File(dir,"final.mp4");
         try{
             if(audioFile.length()<1000||videoFile.length()<1000)
-                throw new IOException("Faltan fragmentos de audio o video. Inicia la captura antes de pulsar Play.");
+                throw new IOException("Faltan fragmentos de audio o video. "+getStats().replace("\n","; "));
             muxTrackFiles(videoFile,audioFile,temp);
             if(!temp.exists()||temp.length()<2000)
                 throw new IOException("El archivo MP4 resultante está vacío");

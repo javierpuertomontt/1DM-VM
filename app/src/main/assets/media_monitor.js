@@ -57,7 +57,12 @@
       try{
         var m=JSON.parse(event.data);
         if(m.cmd==="capture-state"){
-          if(m.session!==capSession)captureReset(m.session);
+          if(m.session!==capSession){
+            captureReset(m.session);
+            post("capture-sync",location.href,"sesion detectada");
+          }
+          if(Boolean(m.active)!==capEnabled)
+            post("capture-state",location.href,Boolean(m.active)?"activa":"inactiva");
           capEnabled=Boolean(m.active);
         }else if(m.cmd==="capture-ack"&&capCurrent&&m.seq===capPending&&m.session===capSession){
           if(m.ok){
@@ -181,7 +186,11 @@
             }catch(e){}
           }
           var originalResult=originalAppend.apply(this,arguments);
-          if(captured)captureBuffer(trackType.indexOf("audio/")===0?"audio":"video",captured);
+          if(captured){
+            captureBuffer(trackType.indexOf("audio/")===0?"audio":"video",captured);
+            post("capture-queued",location.href,
+               (trackType.indexOf("audio/")===0?"audio":"video")+" bytes="+captured.length);
+          }
           try{
             var count=(bufferCounts.get(this)||0)+1;
             bufferCounts.set(this,count);
