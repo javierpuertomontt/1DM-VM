@@ -30,6 +30,44 @@ public final class MediaDiagnostics {
     private final WebView web;
     private final Consumer<String> found;
     private final MseCaptureManager capture;
+    private final android.content.SharedPreferences qualityPrefs;
+    private Runnable onQualityPrefChanged;
+    public void setOnQualityPreferenceChanged(Runnable callback){onQualityPrefChanged=callback;}
+    private boolean isSupportedVideoPage(){
+        try{
+            String current=web.getUrl();
+            if(current==null)return false;
+            String host=Uri.parse(current).getHost();
+            return host!=null&&(host.equalsIgnoreCase("pervtube.net")||
+                   host.toLowerCase(Locale.ROOT).endsWith(".pervtube.net"));
+        }catch(Exception e){return false;}
+    }
+    private static boolean validQuality(String quality){
+        return quality!=null&&quality.matches("auto|240|360|480|720|1080|1440|2160");
+    }
+    public String getSiteQualityPreference(){
+        return qualityPrefs.getString("pervtube.net","1080");
+    }
+    public void setSiteQualityPreference(String quality){
+        if(!validQuality(quality))return;
+        if(quality.equals(getSiteQualityPreference()))return;
+        qualityPrefs.edit().putString("pervtube.net",quality).apply();
+        event("CALIDAD GUARDADA","","PervTube: "+quality);
+        if(onQualityPrefChanged!=null)main.post(onQualityPrefChanged);
+    }
+    private boolean isExpectedPlayer(Uri source,boolean isMainFrame){
+        return !isMainFrame && source!=null && "https".equalsIgnoreCase(source.getScheme()) &&
+            "moviekh.xtremestream.xyz".equalsIgnoreCase(source.getHost()) && isSupportedVideoPage();
+    }
+    private void sendSiteQuality(JavaScriptReplyProxy reply){
+        try{
+            JSONObject data=new JSONObject();
+            data.put("cmd","site-quality-state");
+            data.put("site","pervtube.net");
+            data.put("quality",getSiteQualityPreference());
+            reply.postMessage(data.toString());
+        }catch(Exception ignored){}
+    }
     private final ArrayDeque<String> events=new ArrayDeque<>();
     private final Set<String> seen=new HashSet<>();
     // An unrelated advertisement iframe must not receive capture session data.
@@ -118,6 +156,7 @@ public final class MediaDiagnostics {
 
     public MediaDiagnostics(WebView web,Consumer<String> consumer,MseCaptureManager capture){
         this.web=web;this.found=consumer;this.capture=capture;
+        qualityPrefs=web.getContext().getSharedPreferences("site_player_quality",Context.MODE_PRIVATE);
         try{
             InputStream in=web.getContext().getAssets().open("media_monitor.js");
             ByteArrayOutputStream out=new ByteArrayOutputStream();
@@ -155,13 +194,26 @@ public final class MediaDiagnostics {
                            try{
                                JSONObject obj=new JSONObject(body);
                                String kind=obj.optString("kind","");
+                               if(kind.equals("site-quality-poll")){
+                                   if(isExpectedPlayer(sourceOrigin,isMainFrame))sendSiteQuality(replyProxy);
+                                   return;
+                               }
+                               if(kind.equals("site-quality-manual")){
+                                   String chosen=obj.optString("quality","");
+                                   if(isExpectedPlayer(sourceOrigin,isMainFrame) && validQuality(chosen)){
+                                       setSiteQualityPreference(chosen);
+                                       event("CALIDAD MANUAL",sourceOrigin.toString(),"PervTube "+chosen+"p");
+                                       sendSiteQuality(replyProxy);
+                                   }
+                                   return;
+                               }
                                if(kind.equals("capture-poll")||kind.equals("capture-chunk")){
                                    if(capture!=null && sourceOrigin!=null &&
                                            mseOrigins.contains(sourceOrigin.toString()))
                                        capture.onMessage(obj,sourceOrigin,replyProxy);
                                    return;
                                }
-                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|capture-init|capture-ready|capture-wait|capture-integrity|capture-restart|capture-seek|capture-zero|capture-start-failed|quality-offered|quality-hint|quality-attempt|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
+                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|capture-init|capture-ready|capture-wait|capture-integrity|capture-restart|capture-seek|capture-zero|capture-start-failed|quality-offered|quality-hint|quality-attempt|site-quality-attempt|site-quality-active|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
                                String value=obj.optString("url","");
                                String detail=obj.optString("detail","");
                                if(value.length()>2100||detail.length()>120)return;
@@ -278,6 +330,7 @@ public final class MediaDiagnostics {
           "\nCabeceras observadas: "+observedResponses+
           "\nResoluciones observadas: "+renderedSizes+
           "\nCalidades ofrecidas en controles: "+qualityCandidates+
+          "\nCalidad predeterminada de PervTube: "+getSiteQualityPreference()+
           "\nIndicios de calidad en configuración: "+qualityHints+
           "\nCodecs MSE: "+observedCodecs+
           "\nMonitor de iframes: "+(scriptSupported?"activo":"no disponible en este WebView");
@@ -291,7 +344,7 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.14 (prueba)\n")
+           .append("Versión: 0.15 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")

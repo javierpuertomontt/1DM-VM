@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private AdBlockEngine blocker;
     private MediaDiagnostics diagnostics;
     private MseCaptureManager capture;
+    private TextView siteQualityButton;
     private TextView captureLabel, captureButton;
     private TextView protectionBadge;
     private EditText address;
@@ -148,6 +149,7 @@ public class MainActivity extends Activity {
         web.setBackgroundColor(WHITE);
         capture=new MseCaptureManager(this, () -> refreshCaptureUi());
         diagnostics=new MediaDiagnostics(web, url -> discover(url), capture);
+        diagnostics.setOnQualityPreferenceChanged(()->refreshSiteQualityUi());
         diagnostics.install();
         if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
             WebView.setWebContentsDebuggingEnabled(true);
@@ -184,6 +186,7 @@ public class MainActivity extends Activity {
             }
             @Override public void onPageFinished(WebView v,String url) {
                 if(tab==0 && address!=null)address.setText(url);
+                refreshSiteQualityUi();
                 applyPageFilters();
                 diagnostics.onPageFinished(url);
                 scan(false);
@@ -285,6 +288,10 @@ public class MainActivity extends Activity {
         spaceRow(controls,button("↻ Recargar",false,()->{if(opened)web.reload();}));
         controls.addView(button("◎ Detectar videos",true,()->scan(true)),new LinearLayout.LayoutParams(0,-2,1.4f));
         top.addView(controls);gap(top,9);
+        siteQualityButton=button("Calidad predeterminada PervTube",false,()->showSiteQualityDialog());
+        top.addView(siteQualityButton);
+        refreshSiteQualityUi();
+        gap(top,9);
         captureButton=button(capture.isCapturing()?"■ Detener captura de audio + video":
              capture.isBusy()?"Finalizando MP4…":"● Iniciar captura MP4",capture.isCapturing(),()->toggleCapture());
         top.addView(captureButton);
@@ -313,6 +320,33 @@ public class MainActivity extends Activity {
             if(web.getParent()!=null)((ViewGroup)web.getParent()).removeView(web);
             content.addView(web,new LinearLayout.LayoutParams(-1,0,1));
         }
+    }
+
+    private void refreshSiteQualityUi(){
+        if(siteQualityButton==null||diagnostics==null)return;
+        String value=diagnostics.getSiteQualityPreference();
+        siteQualityButton.setText("★ Calidad habitual PervTube: "+
+            ("auto".equals(value)?"Automática":value+"p")+"  ·  Cambiar");
+    }
+    private void showSiteQualityDialog(){
+        final String[] values={"1080","720","480","auto"};
+        final String[] labels={"1080p — Full HD","720p — HD","480p","Automática (sin forzar)"};
+        String saved=diagnostics.getSiteQualityPreference();
+        int initial=0;
+        for(int i=0;i<values.length;i++)if(values[i].equals(saved)){initial=i;break;}
+        final int[] selected={initial};
+        new AlertDialog.Builder(this)
+          .setTitle("Calidad habitual de PervTube")
+          .setSingleChoiceItems(labels,initial,(d,i)->selected[0]=i)
+          .setPositiveButton("Guardar",(d,i)->{
+              String choice=values[selected[0]];
+              diagnostics.setSiteQualityPreference(choice);
+              refreshSiteQualityUi();
+              Toast.makeText(this,"Preferencia guardada para los videos de PervTube: "+
+                  ("auto".equals(choice)?"automática":choice+"p"),Toast.LENGTH_LONG).show();
+          })
+          .setNegativeButton("Cancelar",null)
+          .show();
     }
 
     private void refreshCaptureUi(){
@@ -374,6 +408,7 @@ public class MainActivity extends Activity {
           .setNegativeButton("Cancelar",null)
           .setPositiveButton("Iniciar captura",(dialog,which)->{
               String wanted=codes[chosen[0]];
+              diagnostics.setSiteQualityPreference(wanted);
               if(capture.start(wanted)){
                   refreshCaptureUi();
                   Toast.makeText(this,"Reiniciando reproductor desde el inicio. Verifica "+

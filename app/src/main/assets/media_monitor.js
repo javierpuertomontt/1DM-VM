@@ -225,6 +225,130 @@
     }catch(e){capEnabled=false;}
   }
 
+
+  // The native app saves a persistent preference *for PervTube* and sends it
+  // to its known embedded video frame. This is separate from recording.
+  var siteQualityPreference="",siteQualityAttemptKey="",siteQualityLastAttempt=0,
+      siteQualityManualActive=false;
+  function isKnownEmbeddedPlayer(){
+    try{return location.protocol==="https:"&&location.hostname.toLowerCase()==="moviekh.xtremestream.xyz";}
+    catch(e){return false;}
+  }
+  function siteQualityPoll(){
+    if(!isKnownEmbeddedPlayer())return;
+    try{
+      if(window.VideoDetectMonitor&&VideoDetectMonitor.postMessage)
+        VideoDetectMonitor.postMessage(JSON.stringify({kind:"site-quality-poll"}));
+    }catch(e){}
+  }
+  function sendManualQuality(value){
+    if(!isKnownEmbeddedPlayer()||!/^(240|360|480|720|1080|1440|2160)$/.test(value))return;
+    siteQualityPreference=value;
+    siteQualityManualActive=true;
+    siteQualityAttemptKey="";
+    try{
+      VideoDetectMonitor.postMessage(JSON.stringify({kind:"site-quality-manual",quality:value}));
+    }catch(e){}
+  }
+  function userSelectedQuality(target){
+    try{
+      if(!target||!target.closest)return "";
+      var option=target.closest(
+        "option,[role=option],.vjs-menu-item,.jw-settings-content-item,"+
+        ".plyr__menu__container button,[class*=quality] button,[class*=quality] li,"+
+        "[class*=resolution] button,[data-quality]");
+      if(!option)return "";
+      var txt=[
+        option.getAttribute("data-quality"),option.getAttribute("data-label"),
+        option.getAttribute("value"),option.textContent||""
+      ].filter(Boolean).join(" ").trim();
+      var m=txt.match(/(?:^|[^0-9])(2160|1440|1080|720|480|360|240)\s*p?(?=[^0-9]|$)/i);
+      return m?m[1]:"";
+    }catch(e){return "";}
+  }
+  document.addEventListener("click",function(e){
+    if(!e.isTrusted)return;
+    var chosen=userSelectedQuality(e.target);
+    if(chosen)sendManualQuality(chosen);
+  },true);
+  document.addEventListener("change",function(e){
+    if(!e.isTrusted)return;
+    var target=e.target;
+    var chosen="";
+    try{
+      if(target&&target.tagName==="SELECT")
+        chosen=userSelectedQuality(target.options[target.selectedIndex]);
+      else chosen=userSelectedQuality(target);
+    }catch(e){}
+    if(chosen)sendManualQuality(chosen);
+  },true);
+  function attemptSiteQuality(){
+    if(!isKnownEmbeddedPlayer()||!siteQualityPreference||siteQualityPreference==="auto")return;
+    var desired=siteQualityPreference;
+    var now=Date.now();
+    try{
+      if(typeof window.jwplayer==="function"){
+        var player=window.jwplayer();
+        var levels=player&&player.getQualityLevels&&player.getQualityLevels();
+        if(Array.isArray(levels)&&levels.length){
+          var index=-1;
+          levels.forEach(function(level,i){
+            var name=String(level.label||"");
+            var m=name.match(/(?:^|[^0-9])(2160|1440|1080|720|480|360|240)\s*p?(?=[^0-9]|$)/i);
+            if(m&&m[1]===desired)index=i;
+          });
+          if(index>=0){
+            if(player.getCurrentQuality&&player.getCurrentQuality()===index){
+              if(siteQualityAttemptKey!=="confirmed:"+desired)
+                post("site-quality-active",location.href,desired+"p confirmado por JW Player");
+              siteQualityAttemptKey="confirmed:"+desired;
+              return;
+            }
+            var key="jw:"+desired+":"+index;
+            if((siteQualityAttemptKey!==key||now-siteQualityLastAttempt>6500)&&
+               typeof player.setCurrentQuality==="function"){
+              player.setCurrentQuality(index);
+              siteQualityAttemptKey=key;siteQualityLastAttempt=now;
+              post("site-quality-attempt",location.href,desired+"p solicitado a JW Player");
+            }
+            return;
+          }
+        }
+      }
+    }catch(e){}
+    try{
+      var candidates=qualityOptions(),match=candidates.find(function(o){return String(o.height)===desired;});
+      if(!match)return; // Retest when menu becomes available after Play.
+      var node=match.node;
+      if(node.tagName==="OPTION"){
+        var select=node.parentElement;
+        if(select&&select.tagName==="SELECT"){
+          if(select.value===node.value)return;
+          if(now-siteQualityLastAttempt<5500)return;
+          select.value=node.value;
+          select.dispatchEvent(new Event("input",{bubbles:true}));
+          select.dispatchEvent(new Event("change",{bubbles:true}));
+          siteQualityAttemptKey="select:"+desired;siteQualityLastAttempt=now;
+          post("site-quality-attempt",location.href,desired+"p solicitado al selector");
+          return;
+        }
+      }
+      if(node.offsetWidth>0&&node.offsetHeight>0){
+        var selected=node.getAttribute("aria-checked")==="true"||
+          node.getAttribute("aria-selected")==="true"||
+          /(^|\s)(active|selected|checked|current)(\s|$)/i.test(String(node.className||""));
+        if(selected)return;
+        if(now-siteQualityLastAttempt<5500)return;
+        node.click();
+        siteQualityAttemptKey="dom:"+desired;siteQualityLastAttempt=now;
+        post("site-quality-attempt",location.href,desired+"p solicitado al menú");
+      }
+    }catch(e){}
+  }
+  siteQualityPoll();
+  setInterval(siteQualityPoll,1600);
+  setInterval(attemptSiteQuality,1250);
+
   // Quality selection is best-effort: only click normal player quality controls.
   // This does not force an unavailable rendition or access protected streams.
   var capPreferredQuality="auto",qualityWasClicked="",qualityAttempts=0;
@@ -275,7 +399,16 @@
     VideoDetectMonitor.onmessage=function(event){
       try{
         var m=JSON.parse(event.data);
-        if(m.cmd==="capture-state"){
+        if(m.cmd==="site-quality-state"){
+          var remembered=String(m.quality||"auto");
+          if(siteQualityPreference!==remembered){
+            siteQualityPreference=remembered;
+            siteQualityAttemptKey="";
+            siteQualityLastAttempt=0;
+            siteQualityManualActive=false;
+          }
+          attemptSiteQuality();
+        }else if(m.cmd==="capture-state"){
           if(m.session!==capSession){
             captureReset(m.session);
             post("capture-sync",location.href,"sesion detectada");
