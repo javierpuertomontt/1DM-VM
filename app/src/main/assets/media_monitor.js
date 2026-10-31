@@ -53,6 +53,18 @@
         if(t&&t.tagName)post("metadata",t.currentSrc||t.src||location.href,
            String(t.videoWidth||0)+"x"+String(t.videoHeight||0));
       },true);
+      
+      // These events expose codec and resolution metadata only, never raw video data.
+      document.addEventListener("resize",function(e){
+        var t=e.target;
+        if(t&&t.tagName==="VIDEO")post("resize",t.currentSrc||t.src||location.href,
+          String(t.videoWidth||0)+"x"+String(t.videoHeight||0));
+      },true);
+      document.addEventListener("encrypted",function(e){
+        var t=e.target;
+        post("encrypted",t&&(t.currentSrc||t.src)||location.href,
+          String(e.initDataType||"unknown"));
+      },true);
       document.addEventListener("error",function(e){
         var t=e.target;if(t&&t.tagName&&/^(VIDEO|AUDIO|SOURCE)$/i.test(t.tagName))
           post("media-error",t.currentSrc||t.src||location.href,t.tagName);
@@ -71,6 +83,17 @@
   if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start,{once:true});
   else start();
   try{
+
+    // Record whether the player feeds media through MSE and which MIME codecs it requests.
+    // Keep native return values and arguments unchanged. Never read segment bytes or keys.
+    var MSE=window.MediaSource;
+    if(MSE&&MSE.prototype&&typeof MSE.prototype.addSourceBuffer==="function"){
+      var originalBuffer=MSE.prototype.addSourceBuffer;
+      MSE.prototype.addSourceBuffer=function(mime){
+        try{post("mse",location.href,String(mime));}catch(e){}
+        return originalBuffer.apply(this,arguments);
+      };
+    }
     var originalFetch=window.fetch;
     if(typeof originalFetch==="function")window.fetch=function(input){
       try{post("fetch",typeof input==="string"?input:input.url,"fetch");}catch(e){}
