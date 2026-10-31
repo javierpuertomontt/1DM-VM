@@ -246,7 +246,7 @@ public class MainActivity extends Activity {
     }
     private void show(int selected) {
         tab=selected;content.removeAllViews();bottom.removeAllViews();
-        String[] names={"Navegador","Videos ("+media.size()+")","Descargas","Diagnóstico"};
+        String[] names={"Navegador","Videos ("+(media.size()+diagnostics.streamGroups().size())+")","Descargas","Diagnóstico"};
         for(int i=0;i<4;i++){
             final int target=i;
             TextView item=text(names[i],11,i==tab?BG:MUTED,i==tab);
@@ -377,7 +377,25 @@ public class MainActivity extends Activity {
         spaceRow(options,button("Limpiar lista",false,()->{media.clear();show(1);}));
         options.addView(button("Buscar más",true,()->show(0)),new LinearLayout.LayoutParams(0,-2,1));
         holder.addView(options);gap(holder,14);
-        if(media.isEmpty()){
+        java.util.List<MediaDiagnostics.StreamGroup> detectedStreams=diagnostics.streamGroups();
+        if(!detectedStreams.isEmpty()){
+            holder.addView(text("TRANSMISIONES SEGMENTADAS",13,ACCENT,true));
+            gap(holder,8);
+            for(MediaDiagnostics.StreamGroup group:detectedStreams){
+                LinearLayout streamCard=vertical();
+                streamCard.setPadding(d(16),d(17),d(16),d(17));
+                streamCard.setBackground(rounded(CARD,16,LINE));
+                streamCard.addView(text("Transmisión detectada · Calidad indicada: "+group.quality,16,WHITE,true));
+                gap(streamCard,7);
+                streamCard.addView(text(group.fragments+" fragmentos observados · "+group.hosts+" servidores CDN",13,ACCENT,false));
+                gap(streamCard,7);
+                streamCard.addView(text("Ruta con sufijo '"+group.suffix+"'. No se ha identificado un MP4 completo ni confirmado un método de descarga. Estos fragmentos no son archivos descargables individuales.",13,MUTED,false));
+                gap(streamCard,11);
+                streamCard.addView(button("Ver diagnóstico",false,()->show(3)));
+                holder.addView(streamCard);gap(holder,12);
+            }
+        }
+        if(media.isEmpty()&&detectedStreams.isEmpty()){
             LinearLayout empty=vertical();empty.setBackground(rounded(CARD,16,LINE));empty.setPadding(d(20),d(24),d(20),d(24));
             empty.addView(text("Todavía no se detectaron fuentes",19,WHITE,true));gap(empty,10);
             empty.addView(text("1. Abre la pestaña Navegador.\n2. Reproduce un video en la página.\n3. Pulsa Detectar videos.\n\nAquí aparecerán los formatos y las distintas resoluciones encontradas.",15,MUTED,false));
@@ -613,7 +631,7 @@ public class MainActivity extends Activity {
         area.setPadding(d(16),d(17),d(16),d(18));
         area.addView(text("Diagnóstico de video",23,WHITE,true));
         gap(area,8);
-        area.addView(text("Registra eventos del navegador y de reproductores incrustados. No necesitas una computadora.",14,MUTED,false));
+        area.addView(text("Registra reproductores, solicitudes multimedia y secuencias de fragmentos. No necesitas una computadora.",14,MUTED,false));
         gap(area,18);
         LinearLayout instructions=vertical();
         instructions.setPadding(d(16),d(16),d(16),d(16));

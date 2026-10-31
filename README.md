@@ -20,3 +20,7 @@ Validar en un dispositivo físico y con páginas de prueba autorizadas. Los repr
 
 ## Diagnóstico de reproducción (v0.5)
 Abre el sitio en Navegador, inicia Play, entra en Diagnóstico y comparte el informe. Se observan solicitudes nativas y eventos en iframes cuando la versión de Android System WebView admite `DOCUMENT_START_SCRIPT` y `WEB_MESSAGE_LISTENER`. El informe elimina queries y fragmentos de enlaces para reducir la exposición de tokens. No registra contraseñas ni formularios y no evade DRM.
+
+
+## v0.6: transmisiones fragmentadas
+El informe mostró solicitudes a `/cdn/down/<id>/1080_enc/<numero>.html` en `xspcdn*.click`. La aplicación agrupa por ID y calidad indicada en la ruta, con contador de fragmentos únicos y servidores CDN. Se presenta como una transmisión segmentada, no como MP4 descargable. No accede a las cargas útiles ni descifra datos. El sufijo `_enc` por sí solo no confirma DRM. Falta comprobar en un dispositivo.

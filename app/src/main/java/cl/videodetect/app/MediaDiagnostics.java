@@ -18,6 +18,12 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.function.Consumer;
 
 public final class MediaDiagnostics {
@@ -30,6 +36,63 @@ public final class MediaDiagnostics {
     private boolean scriptSupported=false;
     private String js="";
     private int mediaHits=0;
+    private int segmentHits=0;
+    private static final Pattern CHUNK_PATH=Pattern.compile(
+      "^/cdn/down/([0-9a-f]{32})/([0-9]{3,4})(?:_([a-z0-9]+))?/([0-9]+)\\.html$",
+      Pattern.CASE_INSENSITIVE);
+    private final Map<String,ObservedStream> streams=new LinkedHashMap<>();
+    private static final class ObservedStream {
+       String contentId,quality,folderSuffix;
+       final Set<String> parts=new HashSet<>();
+       final Set<String> hosts=new HashSet<>();
+       ObservedStream(String id,String q,String suffix){contentId=id;quality=q;folderSuffix=suffix;}
+    }
+    public static final class StreamGroup {
+       public final String contentId,quality,suffix;
+       public final int fragments,hosts;
+       StreamGroup(String id,String quality,String suffix,int fragments,int hosts){
+           this.contentId=id;this.quality=quality;this.suffix=suffix;
+           this.fragments=fragments;this.hosts=hosts;
+       }
+    }
+    public synchronized List<StreamGroup> streamGroups(){
+        List<StreamGroup> out=new ArrayList<>();
+        for(ObservedStream stream:streams.values()){
+            out.add(new StreamGroup(stream.contentId,stream.quality,stream.folderSuffix,
+                    stream.parts.size(),stream.hosts.size()));
+        }
+        return out;
+    }
+    private boolean observeFragment(String url){
+        if(url==null||url.length()>2800)return false;
+        try{
+            Uri u=Uri.parse(url);
+            String scheme=u.getScheme();
+            if(!"https".equalsIgnoreCase(scheme)&&!"http".equalsIgnoreCase(scheme))return false;
+            String path=u.getPath();
+            if(path==null)return false;
+            Matcher match=CHUNK_PATH.matcher(path);
+            if(!match.matches())return false;
+            String domain=u.getHost();
+            if(domain==null||!domain.matches("(?i)^[a-z0-9.-]*xspcdn[0-9]+\\.click$"))return false;
+            String contentId=match.group(1).toLowerCase(Locale.ROOT);
+            String quality=match.group(2);
+            String suffix=match.group(3)==null?"":match.group(3).toLowerCase(Locale.ROOT);
+            String part=match.group(4);
+            String key=contentId+"|"+quality+"|"+suffix;
+            synchronized(this){
+                ObservedStream group=streams.get(key);
+                if(group==null){
+                    if(streams.size()>=20)return true;
+                    group=new ObservedStream(contentId,quality,suffix);
+                    streams.put(key,group);
+                }
+                if(group.parts.add(part)){segmentHits++;mediaHits++;}
+                group.hosts.add(domain.toLowerCase(Locale.ROOT));
+            }
+            return true;
+        }catch(Exception ignored){return false;}
+    }
     private int frames=0;
     private int nativeHits=0;
     private int errors=0;
@@ -70,7 +133,7 @@ public final class MediaDiagnostics {
                                   (isMainFrame?"principal":"iframe")+" "+origin+" "+detail);
                                if("frame".equals(kind))frames++;
                                if("media-error".equals(kind)||"js-error".equals(kind))errors++;
-                               if(looksMedia(value)){mediaHits++;found.accept(value);}
+                               if(!observeFragment(value) && looksMedia(value)){mediaHits++;found.accept(value);}
                            }catch(Exception ignored){}
                         }
                     });
@@ -93,7 +156,7 @@ public final class MediaDiagnostics {
         }
     }
     public void recordNetwork(String url,boolean isMain){
-        if(!looksMedia(url)&&!looksPlayer(url))return;
+        if(!observeFragment(url) && !looksMedia(url)&&!looksPlayer(url))return;
         synchronized(this){nativeHits++;}
         event("SOLICITUD",url,isMain?"documento":"recurso / iframe");
     }
@@ -108,7 +171,7 @@ public final class MediaDiagnostics {
         String low=url.toLowerCase(Locale.ROOT);
         return low.contains("/player/index.php")||low.contains("/embed/");
     }
-    public void clear(){ synchronized(this){events.clear();seen.clear();mediaHits=0;frames=0;nativeHits=0;errors=0;} }
+    public void clear(){ synchronized(this){events.clear();seen.clear();mediaHits=0;segmentHits=0;streams.clear();frames=0;nativeHits=0;errors=0;} }
     private void event(String type,String url,String detail){
         String safe=safeUrl(url);
         String line=type+" | "+safe+" | "+shorten(detail,140);
@@ -136,7 +199,7 @@ public final class MediaDiagnostics {
     public synchronized int size(){return events.size();}
     public synchronized String getStatus(){
         return "Solicitudes "+nativeHits+" · Eventos multimedia "+mediaHits+
-          " · Marcos "+frames+" · Errores "+errors+
+          " · Fragmentos "+segmentHits+" · Marcos "+frames+" · Errores "+errors+
           "\nMonitor de iframes: "+(scriptSupported?"activo":"no disponible en este WebView");
     }
     public synchronized String preview(){
@@ -148,12 +211,22 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.5 (prueba)\n")
+           .append("Versión: 0.6 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")
            .append(getStatus()).append("\n\n")
-           .append("Las consultas de URL fueron eliminadas.\n");
+           .append("Transmisiones segmentadas reconocidas:\n");
+        if(streams.isEmpty())out.append("Ninguna\n");
+        for(StreamGroup stream:streamGroups()){
+            out.append("ID: ").append(stream.contentId)
+               .append(" | Calidad indicada: ").append(stream.quality)
+               .append(" | Carpeta: ").append(stream.suffix.isEmpty()?"sin sufijo":stream.suffix)
+               .append(" | Fragmentos: ").append(stream.fragments)
+               .append(" | CDN: ").append(stream.hosts)
+               .append("\n");
+        }
+        out.append("\nLas consultas de URL fueron eliminadas.\n");
         for(String e:events)out.append(e).append("\n");
         return out.toString();
     }
