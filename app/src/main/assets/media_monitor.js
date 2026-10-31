@@ -5,6 +5,72 @@
   // Capture only after explicit opt-in from the native app. A tiny
   // reply-acknowledged message bridge provides backpressure so full buffer
   // data is never accumulated in a giant JS -> Android string.
+
+  // Keep the most recent fMP4 initialization boxes even before recording.
+  // This lets the user choose quality in the player BEFORE starting capture.
+  var capInitAudio=null,capInitVideo=null,capInitVideosByHeight={};
+  var capInitSent={audio:false,video:false},capWaitReported=false;
+  function mseInit(bytes){
+    try{
+      var a=bytes instanceof ArrayBuffer?new Uint8Array(bytes):
+        ArrayBuffer.isView(bytes)?new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength):null;
+      if(!a||a.length<16||a.length>512000)return null;
+      var view=new DataView(a.buffer,a.byteOffset,a.byteLength),found=false,height=0;
+      function walk(start,end,depth){
+        if(depth>6)return;
+        for(var off=start;off+8<=end;){
+          var size=view.getUint32(off),head=8;
+          var type=String.fromCharCode(a[off+4],a[off+5],a[off+6],a[off+7]);
+          if(size===1){if(off+16>end)return;size=Number(view.getBigUint64(off+8));head=16;}
+          else if(size===0)size=end-off;
+          if(!Number.isFinite(size)||size<head||off+size>end)break;
+          if(type==="moov")found=true;
+          if(type==="tkhd"&&size>=96){
+            var version=a[off+head],index=off+(version===1?100:88);
+            if(index+4<=off+size){
+              var val=view.getUint32(index)>>>16;
+              if(val>=144&&val<=8640)height=val;
+            }
+          }
+          if(type==="moov"||type==="trak")walk(off+head,off+size,depth+1);
+          off+=size;
+        }
+      }
+      walk(0,a.length,0);
+      return found?{bytes:a.slice(),height:height}:null;
+    }catch(e){return null;}
+  }
+  function rememberInit(track,bytes){
+    var ini=mseInit(bytes);
+    if(!ini)return false;
+    if(track==="audio")capInitAudio=ini.bytes;
+    else{
+      capInitVideo=ini.bytes;
+      if(ini.height)capInitVideosByHeight[String(ini.height)]=ini.bytes;
+      post("capture-init",location.href,"video init "+ini.height+"p");
+    }
+    return true;
+  }
+  function ensureInitialization(){
+    if(!capEnabled||!capSession)return;
+    if(!capInitSent.video){
+      var videoInit=capPreferredQuality==="auto"?capInitVideo:
+        capInitVideosByHeight[String(capPreferredQuality)]||null;
+      if(videoInit){
+        capInitSent.video=true;
+        captureBuffer("video",videoInit);
+        post("capture-ready",location.href,"video inicial "+String(capPreferredQuality));
+      }else if(!capWaitReported&&capPreferredQuality!=="auto"){
+        capWaitReported=true;
+        post("capture-wait",location.href,
+          "esperando cabecera de "+capPreferredQuality+"p; las calidades visibles no bastan");
+      }
+    }
+    if(capInitSent.video&&!capInitSent.audio&&capInitAudio){
+      capInitSent.audio=true;
+      captureBuffer("audio",capInitAudio);
+    }
+  }
   var capSession="",capEnabled=false,capQueue=[],capQueuedBytes=0,
       capCurrent=null,capPending=0,capSeq=0,capSending=false,
       capBufferLimit=24*1024*1024;
@@ -17,6 +83,7 @@
   function captureReset(session){
     capSession=session;capQueue=[];capQueuedBytes=0;
     capCurrent=null;capPending=0;capSeq=0;capSending=false;
+    capInitSent={audio:false,video:false};capWaitReported=false;
   }
   function capturePump(){
     if(capSending||!capSession||!capQueue.length)return;
@@ -117,7 +184,10 @@
             qualityWasClicked="";
             qualityAttempts=0;
           }
-          if(capEnabled)selectPreferredQuality();
+          if(capEnabled){
+            selectPreferredQuality();
+            ensureInitialization();
+          }
         }else if(m.cmd==="capture-ack"&&capCurrent&&m.seq===capPending&&m.session===capSession){
           if(m.ok){
             capCurrent.position=Math.min(capCurrent.position+12000,capCurrent.data.length);
@@ -239,11 +309,23 @@
                 captured=new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength).slice();
             }catch(e){}
           }
+          var track=trackType.indexOf("audio/")===0?"audio":"video";
+          var isInit=rememberInit(track,bytes);
           var originalResult=originalAppend.apply(this,arguments);
-          if(captured){
-            captureBuffer(trackType.indexOf("audio/")===0?"audio":"video",captured);
-            post("capture-queued",location.href,
-               (trackType.indexOf("audio/")===0?"audio":"video")+" bytes="+captured.length);
+          if(capEnabled){
+            ensureInitialization();
+            if(!isInit&&capInitSent.video&&capInitSent[track]){
+              if(!captured){
+                try{
+                  if(bytes instanceof ArrayBuffer)captured=new Uint8Array(bytes).slice();
+                  else if(ArrayBuffer.isView(bytes))
+                    captured=new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength).slice();
+                }catch(e){}
+              }
+              if(captured)captureBuffer(track,captured);
+            }
+            if(captured)post("capture-queued",location.href,
+              track+" bytes="+captured.length+" init="+isInit);
           }
           try{
             var count=(bufferCounts.get(this)||0)+1;
