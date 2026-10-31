@@ -368,11 +368,8 @@ public class MainActivity extends Activity {
         }
         final int[] chosen={selected};
         new AlertDialog.Builder(this)
-          .setTitle("Elegir calidad de captura")
+          .setTitle("Calidad deseada (verificar en reproductor)")
           .setSingleChoiceItems(names,selected,(dialog,index)->chosen[0]=index)
-          .setMessage("La calidad debe activarse en el reproductor antes de recibir los primeros segmentos. "+
-             "VideoDetect intentará seleccionar la opción, pero si el reproductor no permite control externo tendrás que elegirla manualmente. "+
-             "Después de exportar se comprobará la resolución REAL del MP4.")
           .setNegativeButton("Cancelar",null)
           .setPositiveButton("Iniciar captura",(dialog,which)->{
               String wanted=codes[chosen[0]];
