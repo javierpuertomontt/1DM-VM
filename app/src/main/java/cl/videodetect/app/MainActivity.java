@@ -201,7 +201,7 @@ public class MainActivity extends Activity {
                     }catch(Exception ignored){}
                 }
             } catch(Exception ignored){}
-            if(notify)Toast.makeText(this,"Escaneo realizado. Abre Videos para ver los archivos.",Toast.LENGTH_LONG).show();
+            if(notify){Toast.makeText(this,"Escaneo terminado: "+media.size()+" archivos.",Toast.LENGTH_SHORT).show();show(1);}
         });
     }
     private void show(int selected) {
@@ -240,7 +240,7 @@ public class MainActivity extends Activity {
         LinearLayout controls=horizontal();
         spaceRow(controls,button("← Atrás",false,()->{if(web.canGoBack())web.goBack();}));
         spaceRow(controls,button("↻ Recargar",false,()->{if(opened)web.reload();}));
-        controls.addView(button("◎ Detectar videos",true,()->{scan(true);show(1);}),new LinearLayout.LayoutParams(0,-2,1.4f));
+        controls.addView(button("◎ Detectar videos",true,()->scan(true)),new LinearLayout.LayoutParams(0,-2,1.4f));
         top.addView(controls);
         content.addView(top);
         if(!opened){
