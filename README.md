@@ -39,3 +39,7 @@ El usuario inicia explícitamente desde Navegador → **Iniciar captura MP4**. S
 
 ## v0.10: corrección del puente binario
 Se corrigió un error de v0.9: `MediaDiagnostics.onPostMessage` rechazaba todo mensaje > 3500 caracteres, pero cada fragmento Base64 enviado por el capturador puede medir ~16.000 caracteres. Se acepta ahora una excepción estrictamente limitada a 21.000 caracteres para mensajes `capture-chunk` con tamaño del campo `base64` limitado a 26.000 y valida sesión/origen. Los eventos de diagnóstico ordinarios conservan el límite 3500. Se añadieron contadores de recepción, guardado, rechazo y conexión, y tamaños en KB. La exportación MP4 sigue siendo experimental: el muxer de Android puede no entender todas las secuencias fMP4 fragmentadas.
+
+
+## v0.11: calidad preferida y validación de exportación
+El inicio de captura presenta las calidades observadas durante la sesión, más el modo «Mejor disponible». Cada grupo de transmisión incluye «Capturar 1080p/720p/480p» según las solicitudes detectadas. La app envía la preferencia al JavaScript del reproductor para intentar escoger un control de calidad de la interfaz; esto no garantiza que un reproductor externo cambie de calidad. Se muestra la resolución real informada por el elemento video y se lee el ancho y alto de la pista MP4 exportada con MediaExtractor. Si se pidió 1080p y la pista resultó 480p, se informa la discrepancia sin etiquetarlo falsamente como Full HD. La captura sigue siendo experimental y requiere que el reproductor entregue segmentos compatibles.

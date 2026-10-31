@@ -147,7 +147,7 @@ public final class MediaDiagnostics {
                                    if(capture!=null)capture.onMessage(obj,sourceOrigin,replyProxy);
                                    return;
                                }
-                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
+                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|capture-sync|capture-state|capture-queued|quality-attempt|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
                                String value=obj.optString("url","");
                                String detail=obj.optString("detail","");
                                if(value.length()>2100||detail.length()>120)return;
@@ -167,6 +167,7 @@ public final class MediaDiagnostics {
                                if("mse-append".equals(kind))mseAppendSamples++;
                                if(("resize".equals(kind)||"metadata".equals(kind))&&detail.matches("[0-9]{1,5}x[0-9]{1,5}")){
                                    if(renderedSizes.size()<30)renderedSizes.add(detail);
+                                   if(capture!=null)capture.onVideoResolution(detail);
                                }
                                if("media-error".equals(kind)||"js-error".equals(kind))errors++;
                                if(!observeFragment(value) && looksMedia(value)){mediaHits++;found.accept(value);}
@@ -254,7 +255,7 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.10 (prueba)\n")
+           .append("Versión: 0.11 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")

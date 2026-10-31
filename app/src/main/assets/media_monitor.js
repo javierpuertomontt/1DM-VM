@@ -52,6 +52,53 @@
       capturePump();
     }catch(e){capEnabled=false;}
   }
+
+  // Quality selection is best-effort: only click normal player quality controls.
+  // This does not force an unavailable rendition or access protected streams.
+  var capPreferredQuality="auto",qualityWasClicked="",qualityAttempts=0;
+  function qualityOptions(){
+    var opts=[];
+    try{
+      document.querySelectorAll("select option, [role=option], .vjs-menu-item, .jw-settings-content-item, .plyr__menu__container button, [class*=quality] button, [class*=quality] li, [class*=resolution] button, [data-quality], button, li")
+        .forEach(function(n){
+          if(opts.length>100)return;
+          var text=(n.textContent||"").trim().toLowerCase().replace(/\s+/g," ");
+          if(!/^(?:240|360|480|720|1080|1440|2160)p?(?:\s*(?:hd|fhd|4k))?$/.test(text))return;
+          opts.push({node:n,height:parseInt(text,10)});
+        });
+    }catch(e){}
+    return opts;
+  }
+  function selectPreferredQuality(){
+    if(!capEnabled||!capSession||qualityWasClicked)return;
+    var host="";
+    try{host=location.hostname.toLowerCase();}catch(e){}
+    if(host.indexOf("xtremestream.xyz")<0)return;
+    if(qualityAttempts++>25)return;
+    try{
+      var opts=qualityOptions();
+      if(!opts.length)return;
+      var desired=capPreferredQuality==="auto"?
+        Math.max.apply(null,opts.map(function(o){return o.height;})):
+        parseInt(capPreferredQuality,10);
+      var match=opts.find(function(o){return o.height===desired;});
+      if(!match)return;
+      var n=match.node;
+      if(n.tagName==="OPTION"){
+        var select=n.parentElement;
+        if(select&&select.tagName==="SELECT"){
+          select.value=n.value;
+          select.dispatchEvent(new Event("input",{bubbles:true}));
+          select.dispatchEvent(new Event("change",{bubbles:true}));
+        }
+      }else if(n.offsetWidth>0&&n.offsetHeight>0){
+        n.click();
+      }else return;
+      qualityWasClicked=String(desired);
+      post("quality-attempt",location.href,"solicitado "+desired+"p");
+    }catch(e){}
+  }
+  setInterval(selectPreferredQuality,1100);
   if(window.VideoDetectMonitor){
     VideoDetectMonitor.onmessage=function(event){
       try{
@@ -64,6 +111,13 @@
           if(Boolean(m.active)!==capEnabled)
             post("capture-state",location.href,Boolean(m.active)?"activa":"inactiva");
           capEnabled=Boolean(m.active);
+          var preference=String(m.quality||"auto");
+          if(preference!==capPreferredQuality){
+            capPreferredQuality=preference;
+            qualityWasClicked="";
+            qualityAttempts=0;
+          }
+          if(capEnabled)selectPreferredQuality();
         }else if(m.cmd==="capture-ack"&&capCurrent&&m.seq===capPending&&m.session===capSession){
           if(m.ok){
             capCurrent.position=Math.min(capCurrent.position+12000,capCurrent.data.length);

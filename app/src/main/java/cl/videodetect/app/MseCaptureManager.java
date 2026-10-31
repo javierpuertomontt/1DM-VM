@@ -35,6 +35,7 @@ public final class MseCaptureManager {
     private volatile boolean capturing=false,closing=false,exporting=false;
     private volatile String id="",status="Captura detenida";
     private volatile String lastResult="";
+    private volatile String desiredQuality="auto",observedQuality="sin confirmar",fileQuality="desconocida";
     private volatile Uri savedUri;
     private File dir,audioFile,videoFile;
     private FileOutputStream aout,vout;
@@ -56,7 +57,10 @@ public final class MseCaptureManager {
     public boolean isBusy(){return capturing||closing||exporting;}
     public String getStatus(){return status;}
     public String getStats(){
-        return "Audio: "+displaySize(audioBytes)+" · Video: "+displaySize(videoBytes)+
+        return "Preferencia: "+("auto".equals(desiredQuality)?"máxima disponible":desiredQuality+"p")+
+           " · Resolución reproducida: "+observedQuality+
+           " · MP4: "+fileQuality+
+           "\nAudio: "+displaySize(audioBytes)+" · Video: "+displaySize(videoBytes)+
            "\nConexiones: "+polls+" · Fragmentos recibidos: "+attemptedChunks+
            " · Guardados: "+storedChunks+" · Rechazados: "+rejectedChunks+
            "\nPuente: "+lastBridge;
@@ -67,9 +71,28 @@ public final class MseCaptureManager {
         return String.format(java.util.Locale.ROOT,"%.2f MB",bytes/1048576.0);
     }
     public Uri getSavedUri(){return savedUri;}
+    public String getDesiredQuality(){return desiredQuality;}
+    public String getObservedQuality(){return observedQuality;}
+    public String getFileQuality(){return fileQuality;}
+    public void onVideoResolution(String dimensions){
+        if(!capturing || dimensions==null || !dimensions.matches("[0-9]{1,5}x[0-9]{1,5}"))return;
+        String[] parts=dimensions.split("x");
+        try {
+            int height=Integer.parseInt(parts[1]);
+            if(height<144||height>8640)return;
+            String next=height+"p";
+            if(!next.equals(observedQuality)){observedQuality=next;update();}
+        }catch(Exception ignored){}
+    }
     public String getLastResult(){return lastResult;}
-    public synchronized boolean start(){
+    public synchronized boolean start(String quality){
         if(isBusy()||stoppedPermanently)return false;
+        if(!"auto".equals(quality) && !"2160".equals(quality) && !"1440".equals(quality) &&
+           !"1080".equals(quality) && !"720".equals(quality) && !"480".equals(quality) &&
+           !"360".equals(quality) && !"240".equals(quality))quality="auto";
+        desiredQuality=quality;
+        observedQuality="sin confirmar";
+        fileQuality="pendiente";
         id=UUID.randomUUID().toString();
         capturing=true;closing=false;exporting=false;
         savedUri=null;lastResult="";errorCount=0;
@@ -89,7 +112,8 @@ public final class MseCaptureManager {
             status="No se pudo iniciar: "+e.getMessage();update();
             return false;
         }
-        status="Capturando: reproduce el video desde el inicio, sin cambiar de calidad";
+        status="Capturando · Selección solicitada: "+("auto".equals(desiredQuality)?"mejor disponible":desiredQuality+"p")+
+           ". Verifica en el reproductor que esa calidad esté realmente activada.";
         lastWrite.set(System.currentTimeMillis());
         update();return true;
     }
@@ -167,6 +191,7 @@ public final class MseCaptureManager {
             out.put("cmd","capture-state");
             out.put("active",capturing);
             out.put("session",id);
+            out.put("quality",desiredQuality);
             reply.postMessage(out.toString());
         }catch(Exception ignored){}
     }
@@ -196,14 +221,26 @@ public final class MseCaptureManager {
         try{
             if(audioFile.length()<1000||videoFile.length()<1000)
                 throw new IOException("Faltan fragmentos de audio o video. "+getStats().replace("\n","; "));
-            muxTrackFiles(videoFile,audioFile,temp);
+            int[] dimensions=muxTrackFiles(videoFile,audioFile,temp);
+            fileQuality=dimensions[1]>0?dimensions[0]+"x"+dimensions[1]:"no identificada";
             if(!temp.exists()||temp.length()<2000)
                 throw new IOException("El archivo MP4 resultante está vacío");
-            Uri created=publish(temp,"VideoDetect_"+System.currentTimeMillis()+".mp4","video/mp4");
+            int realHeight=dimensions[1];
+            boolean belowRequested=!"auto".equals(desiredQuality) && realHeight>0 &&
+                realHeight<Integer.parseInt(desiredQuality);
+            String name="VideoDetect_"+(realHeight>0?realHeight+"p_":"")+System.currentTimeMillis()+".mp4";
+            Uri created=publish(temp,name,"video/mp4");
             if(created==null)throw new IOException("No se pudo publicar en Descargas");
             savedUri=created;
             lastResult="MP4 creado en Descargas/VideoDetect · "+String.format(java.util.Locale.ROOT,"%.1f MB",temp.length()/1048576.0);
             status=lastResult;
+            if(belowRequested)status="AVISO: pediste "+desiredQuality+"p pero el MP4 es "+
+               realHeight+"p. El reproductor no inició la grabación en la resolución solicitada. "+
+               "Archivo disponible: Descargas/VideoDetect.";
+            else if("auto".equals(desiredQuality) && observedQuality.matches("[0-9]+p") &&
+                    realHeight>0 && Integer.parseInt(observedQuality.replace("p",""))>realHeight)
+               status="AVISO: el reproductor llegó a "+observedQuality+
+                 " pero el MP4 comenzó a "+realHeight+"p. Archivo guardado sin prometer máxima calidad.";
         }catch(Exception e){
             lastResult="No se pudo combinar: "+e.getMessage();
             status=lastResult+" · Se conservaron las pistas temporales para diagnóstico.";
@@ -219,16 +256,19 @@ public final class MseCaptureManager {
         }
         throw new IOException("No se encontró pista "+prefix+" en los segmentos");
     }
-    public static void muxTrackFiles(File video,File audio,File output)throws Exception{
+    public static int[] muxTrackFiles(File video,File audio,File output)throws Exception{
         MediaExtractor ve=new MediaExtractor(),ae=new MediaExtractor();
         MediaMuxer muxer=null;
         boolean started=false;
+        int width=0,height=0;
         try{
             ve.setDataSource(video.getAbsolutePath());
             ae.setDataSource(audio.getAbsolutePath());
             int vi=findTrack(ve,"video/");
             int ai=findTrack(ae,"audio/");
             MediaFormat vf=ve.getTrackFormat(vi),af=ae.getTrackFormat(ai);
+            width=vf.containsKey(MediaFormat.KEY_WIDTH)?vf.getInteger(MediaFormat.KEY_WIDTH):0;
+            height=vf.containsKey(MediaFormat.KEY_HEIGHT)?vf.getInteger(MediaFormat.KEY_HEIGHT):0;
             ve.selectTrack(vi);ae.selectTrack(ai);
             muxer=new MediaMuxer(output.getAbsolutePath(),MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
             int vm=muxer.addTrack(vf);
@@ -260,6 +300,7 @@ public final class MseCaptureManager {
             }
             if(lastV<0||lastA<0)throw new IOException("No se pudieron leer muestras de ambas pistas");
             muxer.stop();started=false;
+            return new int[]{width,height};
         }finally{
             try{ve.release();}catch(Exception ignored){}
             try{ae.release();}catch(Exception ignored){}

@@ -338,18 +338,51 @@ public class MainActivity extends Activity {
         if(!opened||web.getUrl()==null){
             Toast.makeText(this,"Abre una página primero",Toast.LENGTH_LONG).show();return;
         }
-        new AlertDialog.Builder(this).setTitle("Captura de audio y video")
-           .setMessage("Esta función graba los segmentos MP4 que el reproductor entrega a MediaSource mientras reproduce.\n\n"+
-             "Para incluir los segmentos iniciales, al comenzar se recargará la página: después pulsa Play y selecciona la calidad deseada. "+
-             "Mantén el navegador visible. Al terminar pulsa «Detener captura» para crear un MP4 en Descargas/VideoDetect.\n\n"+
-             "Es una función experimental: las transmisiones adaptativas o con DRM pueden no exportarse. Úsala únicamente con contenido que tengas derecho a guardar.")
-           .setNegativeButton("Cancelar",null)
-           .setPositiveButton("Iniciar y recargar",(dialog,which)->{
-               if(capture.start()){
-                   refreshCaptureUi();
-                   web.reload();
-               }else Toast.makeText(this,capture.getStatus(),Toast.LENGTH_LONG).show();
-           }).show();
+        showQualityChoice(null);
+    }
+
+
+    private void showQualityChoice(String suggested){
+        java.util.LinkedHashSet<String> options=new java.util.LinkedHashSet<>();
+        options.add("auto");
+        java.util.ArrayList<Integer> heights=new java.util.ArrayList<>();
+        for(MediaDiagnostics.StreamGroup group:diagnostics.streamGroups()){
+            try {
+                int value=Integer.parseInt(group.quality);
+                if(value>=240&&!heights.contains(value))heights.add(value);
+            }catch(Exception ignored){}
+        }
+        java.util.Collections.sort(heights,java.util.Collections.reverseOrder());
+        // If no quality was captured yet, show standard requests as unverified.
+        boolean verified=!heights.isEmpty();
+        if(heights.isEmpty()){heights.add(1080);heights.add(720);heights.add(480);}
+        for(Integer h:heights)options.add(h.toString());
+        String[] codes=options.toArray(new String[0]);
+        String[] names=new String[codes.length];
+        int selected=0;
+        for(int i=0;i<codes.length;i++){
+            String q=codes[i];
+            names[i]=q.equals("auto")?"Mejor disponible (automático)":
+                q+"p"+(verified?" · observado en esta sesión":" · sin verificar");
+            if(q.equals(suggested))selected=i;
+        }
+        final int[] chosen={selected};
+        new AlertDialog.Builder(this)
+          .setTitle("Elegir calidad de captura")
+          .setSingleChoiceItems(names,selected,(dialog,index)->chosen[0]=index)
+          .setMessage("La calidad debe activarse en el reproductor antes de recibir los primeros segmentos. "+
+             "VideoDetect intentará seleccionar la opción, pero si el reproductor no permite control externo tendrás que elegirla manualmente. "+
+             "Después de exportar se comprobará la resolución REAL del MP4.")
+          .setNegativeButton("Cancelar",null)
+          .setPositiveButton("Iniciar captura",(dialog,which)->{
+              String wanted=codes[chosen[0]];
+              if(capture.start(wanted)){
+                  refreshCaptureUi();
+                  web.reload();
+                  Toast.makeText(this,"Calidad solicitada: "+("auto".equals(wanted)?"máxima":wanted+"p")+
+                      ". Revisa el selector del reproductor antes de Play.",Toast.LENGTH_LONG).show();
+              }else Toast.makeText(this,capture.getStatus(),Toast.LENGTH_LONG).show();
+          }).show();
     }
 
     private void refreshProtectionBadge(){
@@ -439,7 +472,17 @@ public class MainActivity extends Activity {
                 gap(streamCard,7);
                 streamCard.addView(text("Ruta con sufijo '"+group.suffix+"'. No se ha identificado un MP4 completo ni confirmado un método de descarga. Estos fragmentos no son archivos descargables individuales.",13,MUTED,false));
                 gap(streamCard,11);
-                streamCard.addView(button("Ver diagnóstico",false,()->show(3)));
+                LinearLayout streamActions=horizontal();
+                spaceRow(streamActions,button("Ver diagnóstico",false,()->show(3)));
+                streamActions.addView(button("Capturar "+group.quality+"p",true,()->{
+                    if(capture.isBusy()){
+                        Toast.makeText(this,"Detén la captura anterior primero",Toast.LENGTH_SHORT).show();
+                    }else{
+                        show(0);
+                        showQualityChoice(group.quality);
+                    }
+                }),new LinearLayout.LayoutParams(0,-2,1.2f));
+                streamCard.addView(streamActions);
                 holder.addView(streamCard);gap(holder,12);
             }
         }
