@@ -292,7 +292,7 @@ public class MainActivity extends Activity {
         captureLabel=text(capture.getStatus()+"\n"+capture.getStats(),12,MUTED,false);
         top.addView(captureLabel);
         gap(top,6);
-        top.addView(text("Las calidades HD pueden aparecer después de Play. Selecciónalas también en el reproductor. La calidad exportada se verificará.",11,MUTED,false));
+        top.addView(text("Al iniciar una captura se reiniciará solo el reproductor y se buscará 0:00. Verifica también la calidad elegida dentro del video.",11,MUTED,false));
         content.addView(top);
         if(!opened){
             ScrollView scroll=new ScrollView(this);LinearLayout intro=vertical();
@@ -376,8 +376,9 @@ public class MainActivity extends Activity {
               String wanted=codes[chosen[0]];
               if(capture.start(wanted)){
                   refreshCaptureUi();
-                  Toast.makeText(this,"Sin recarga. Selecciona "+("auto".equals(wanted)?"calidad alta":wanted+"p")+
-                      " en el menú del reproductor y vuelve al inicio del video.",Toast.LENGTH_LONG).show();
+                  Toast.makeText(this,"Reiniciando reproductor desde el inicio. Verifica "+
+                      ("auto".equals(wanted)?"la calidad disponible":wanted+"p")+
+                      " y pulsa Play si hace falta.",Toast.LENGTH_LONG).show();
               }else Toast.makeText(this,capture.getStatus(),Toast.LENGTH_LONG).show();
           }).show();
     }
@@ -464,15 +465,17 @@ public class MainActivity extends Activity {
             info.setBackground(rounded(CARD,14,LINE));
             info.addView(text("Calidad del reproductor",17,WHITE,true));gap(info,8);
             java.util.Set<String> offered=diagnostics.qualityCandidates();
+            java.util.Set<String> hinted=diagnostics.qualityHints();
             java.util.Set<String> fetched=new java.util.HashSet<>();
             for(MediaDiagnostics.StreamGroup group:detectedStreams)fetched.add(group.quality+"p");
             for(String q:new String[]{"1080p","720p","480p"}){
                 String state=fetched.contains(q)?"Solicitada por el sitio":
-                   offered.contains(q)?"Anunciada en el menú; no descargada":"Pendiente: reproducir y elegir "+q;
+                   offered.contains(q)?"Visible en menú; aún no solicitada":
+                   hinted.contains(q)?"Indicio en configuración; sin verificar":"Pendiente: reproducir y elegir "+q;
                 info.addView(text(q+" · "+state,13,fetched.contains(q)?ACCENT:MUTED,false));
                 gap(info,6);
             }
-            info.addView(text("La aplicación no puede confirmar 1080p antes de que la página lo anuncie o solicite sus fragmentos.",12,MUTED,false));
+            info.addView(text("Buscamos calidades al cargar y durante 11 segundos. Un indicio en la configuración no confirma que el CDN entregue el video.",12,MUTED,false));
             gap(info,12);
             info.addView(button("Elegir calidad y capturar",true,()->{
                 if(capture.isBusy()){

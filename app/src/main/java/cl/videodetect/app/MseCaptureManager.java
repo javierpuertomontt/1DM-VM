@@ -37,6 +37,7 @@ public final class MseCaptureManager {
     private volatile String lastResult="";
     private volatile String timingReport="Sin analizar";
     private volatile String integrityWarning="";
+    private volatile String startPositionStatus="Todavía no confirmado";
     private volatile String desiredQuality="auto",observedQuality="sin confirmar",fileQuality="desconocida";
     private volatile Uri savedUri;
     private File dir,audioFile,videoFile;
@@ -61,7 +62,8 @@ public final class MseCaptureManager {
     public String getStats(){
         return "Preferencia: "+("auto".equals(desiredQuality)?"máxima disponible":desiredQuality+"p")+
            " · Resolución reproducida: "+observedQuality+
-           " · MP4: "+fileQuality+"\nContinuidad: "+timingReport+
+           " · MP4: "+fileQuality+"\nInicio: "+startPositionStatus+
+           "\nContinuidad: "+timingReport+
            (integrityWarning.isEmpty()?"":"\nAdvertencia: "+integrityWarning)+
            "\nAudio: "+displaySize(audioBytes)+" · Video: "+displaySize(videoBytes)+
            "\nConexiones: "+polls+" · Fragmentos recibidos: "+attemptedChunks+
@@ -100,6 +102,18 @@ public final class MseCaptureManager {
         }
         update();
     }
+    public void onStartSignal(String kind,String detail){
+        if(!capturing)return;
+        if("capture-zero".equals(kind))
+            startPositionStatus="0:00 confirmado por el reproductor ("+detail+")";
+        else if("capture-start-failed".equals(kind))
+            startPositionStatus="No se pudo confirmar 0:00: "+detail;
+        else if("capture-restart".equals(kind))
+            startPositionStatus="Reiniciando el reproductor incrustado";
+        else if("capture-seek".equals(kind))
+            startPositionStatus="Solicitando el regreso a 0:00";
+        update();
+    }
     public void onIntegrityEvent(String detail){
         if(!capturing)return;
         integrityWarning=detail;
@@ -117,6 +131,7 @@ public final class MseCaptureManager {
         observedQuality="sin confirmar";
         fileQuality="pendiente";
         integrityWarning="";timingReport="Pendiente";
+        startPositionStatus="Reiniciando el reproductor para comenzar en 0:00";
         id=UUID.randomUUID().toString();
         capturing=true;closing=false;exporting=false;
         savedUri=null;lastResult="";errorCount=0;
@@ -136,8 +151,8 @@ public final class MseCaptureManager {
             status="No se pudo iniciar: "+e.getMessage();update();
             return false;
         }
-        status="Capturando · Selección solicitada: "+("auto".equals(desiredQuality)?"mejor disponible":desiredQuality+"p")+
-           ". Verifica en el reproductor que esa calidad esté realmente activada.";
+        status="Preparando captura desde 0:00 · Calidad "+("auto".equals(desiredQuality)?"automática":desiredQuality+"p")+
+           ". El reproductor se reiniciará una vez; pulsa Play cuando esté listo.";
         lastWrite.set(System.currentTimeMillis());
         update();return true;
     }

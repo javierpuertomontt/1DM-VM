@@ -51,3 +51,9 @@ Las opciones 1080p, 720p y 480p se pueden elegir antes de pulsar Play; se indica
 
 ## v0.13: continuidad de remultiplexación y calidades ofrecidas
 Se eliminó el ajuste artificial `Math.max(sampleTime,last+1)` que alteraba la presentación de fotogramas con PTS reordenadas. El muxer conserva ahora los PTS originales leídos por MediaExtractor y registra la cantidad de muestras, intervalos >500 ms y retrocesos (estos últimos no son por sí solos un error con H.264). El monitor de MSE avisa si aparecen nuevas cabeceras MP4 de otra resolución durante una captura, y evita tratar una mezcla de resoluciones como grabación íntegra. La interfaz diferencia calidades ofrecidas en controles DOM, calidades con fragmentos CDN observados y calidades aún no verificadas. El reproductor externo puede no anunciar 1080p antes de pulsar Play; eso no se puede suponer como confirmado. La exportación a MP4 sigue siendo experimental: falta una prueba en el dispositivo con el video real.
+
+
+## v0.14: detección progresiva y captura desde 0:00
+El script del reproductor busca opciones HD al cargar y a los 1,5, 3, 5, 8 y 11 segundos. Inspecciona menús, configuración en línea y, si está disponible, la lista de calidades de JW Player. Distingue indicios de configuración, opciones de menú y fragmentos realmente solicitados; no promete 1080p si la página no lo anuncia sin reproducir.
+
+Al iniciar la captura se reinicia solo el iframe del reproductor una vez por sesión, mediante sessionStorage, para forzar un flujo nuevo desde el inicio. El observador intenta confirmar currentTime=0 y espera la cabecera MP4 de la calidad escogida antes de guardar. Si el reproductor impide regresar a 0:00, el diagnóstico lo indica. La implementación no garantiza que el proveedor ofrezca 1080p sin Play ni que el audio y video comiencen exactamente en 0 si se reutilizan buffers; hay que comprobar el resultado en un dispositivo.
