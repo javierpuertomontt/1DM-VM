@@ -60,6 +60,8 @@ public class MainActivity extends Activity {
     private final Set<String> ads = new HashSet<>(Arrays.asList("doubleclick.net","googlesyndication.com","googleadservices.com","popads.net","popcash.net","exoclick.com","exosrv.com","adsterra.com","onclickads.net","propellerads.com","trafficjunky.net","juicyads.com","adskeeper.co.uk"));
     private final List<Long> downloadIds = new ArrayList<>();
     private WebView web;
+    private AdBlockEngine blocker;
+    private TextView protectionBadge;
     private EditText address;
     private LinearLayout root, content, bottom;
     private int tab = 0;
@@ -117,15 +119,18 @@ public class MainActivity extends Activity {
         String ids=pref.getString("ids","");
         for(String part:ids.split(","))try {downloadIds.add(Long.parseLong(part));}catch(Exception ignored){}
         root=vertical();root.setBackgroundColor(BG);setContentView(root);
+        blocker=new AdBlockEngine(this, () -> {if(protectionBadge!=null)refreshProtectionBadge();});
         LinearLayout header=horizontal();
         header.setPadding(d(18),d(14),d(18),d(12));
         LinearLayout title=vertical();
         title.addView(text("VideoDetect",23,WHITE,true));
         title.addView(text("Navega  •  encuentra  •  descarga",12,MUTED,false));
         header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        TextView shield=text("●  Bloqueo activo",11,ACCENT,true);
-        shield.setPadding(d(10),d(9),d(10),d(9));shield.setBackground(rounded(CARD,30,LINE));
-        header.addView(shield); root.addView(header);
+        protectionBadge=text("●  Bloqueo activo",11,ACCENT,true);
+        protectionBadge.setPadding(d(10),d(9),d(10),d(9));protectionBadge.setBackground(rounded(CARD,30,LINE));
+        protectionBadge.setOnClickListener(v->showProtectionDialog());
+        header.addView(protectionBadge); root.addView(header);
+        refreshProtectionBadge();
         View divider=new View(this);divider.setBackgroundColor(LINE);
         root.addView(divider,new LinearLayout.LayoutParams(-1,d(1)));
         content=vertical();root.addView(content,new LinearLayout.LayoutParams(-1,0,1));
@@ -137,7 +142,7 @@ public class MainActivity extends Activity {
         WebSettings s=web.getSettings();
         s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
-        s.setSupportMultipleWindows(false);s.setJavaScriptCanOpenWindowsAutomatically(false);
+        s.setSupportMultipleWindows(true);s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         web.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onCreateWindow(WebView v,boolean dialog,boolean gesture,Message m){return false;}
@@ -145,18 +150,28 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest req) {
                 Uri uri=req.getUrl();
-                if(isAd(uri.getHost()))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
+                if(blocker.blocks(uri.toString()))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
                 discover(uri.toString());
                 return super.shouldInterceptRequest(v,req);
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view,WebResourceRequest req) {
                 Uri uri=req.getUrl();
-                if(isAd(uri.getHost()))return true;
+                if(blocker.blocks(uri.toString()))return true;
                 String scheme=uri.getScheme();
-                return !("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme));
+                if(!("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme)))return true;
+                // Block unwanted top-level popunders from the known troublesome page.
+                if(blocker.isEnabled() && req.isForMainFrame() && !req.hasGesture() && web.getUrl()!=null){
+                    String oldHost=Uri.parse(web.getUrl()).getHost();
+                    String nextHost=uri.getHost();
+                    if(oldHost!=null && nextHost!=null && oldHost.endsWith("pervtube.net")
+                         && !nextHost.equals(oldHost) && !nextHost.endsWith(".pervtube.net"))
+                        return true;
+                }
+                return false;
             }
             @Override public void onPageFinished(WebView v,String url) {
                 if(tab==0 && address!=null)address.setText(url);
+                applyPageFilters();
                 scan(false);
             }
         });
@@ -263,6 +278,59 @@ public class MainActivity extends Activity {
             content.addView(web,new LinearLayout.LayoutParams(-1,0,1));
         }
     }
+
+    private void refreshProtectionBadge(){
+        if(protectionBadge==null||blocker==null)return;
+        protectionBadge.setText(blocker.isEnabled()?"●  Filtros activos":"○  Sin filtros");
+        protectionBadge.setTextColor(blocker.isEnabled()?ACCENT:MUTED);
+    }
+    private void showProtectionDialog(){
+        if(blocker==null)return;
+        String message="Protección de anuncios y ventanas emergentes.\n\n"
+          +blocker.getState()+"\n"
+          +"Reglas de red: "+blocker.getLoadedCount()+"\n"
+          +"Solicitudes bloqueadas: "+blocker.getBlockedCount()+"\n\n"
+          +"EasyList, EasyPrivacy y AdGuard Popups se actualizan por Internet y se guardan para funcionar sin conexión. Se aplica un subconjunto compatible de sus reglas.\n\n"
+          +"Si el video no reproduce, puedes desactivar temporalmente los filtros aquí.";
+        new AlertDialog.Builder(this).setTitle("Protección de publicidad")
+          .setMessage(message)
+          .setPositiveButton(blocker.isEnabled()?"Desactivar":"Activar",(d,w)->{
+              blocker.setEnabled(!blocker.isEnabled());
+              refreshProtectionBadge();
+              if(opened){web.reload();}
+          })
+          .setNeutralButton("Actualizar filtros",(d,w)->{
+              blocker.refresh();
+              Toast.makeText(this,"Actualizando las listas de filtros",Toast.LENGTH_LONG).show();
+          })
+          .setNegativeButton("Cerrar",null).show();
+    }
+    private void applyPageFilters(){
+        if(blocker==null || !blocker.isEnabled() || !opened)return;
+        String host="";
+        try{host=Uri.parse(web.getUrl()).getHost();}catch(Exception ignored){}
+        final String css=blocker.cosmeticCss(host);
+        final String cleanScript=
+              "(function(){try{"
+            + "var style=document.getElementById('videodetect-filter-css');"
+            + "if(!style){style=document.createElement('style');style.id='videodetect-filter-css';(document.head||document.documentElement).appendChild(style);}"
+            + "style.textContent="+org.json.JSONObject.quote(css)+";"
+            + "if(!window.__vdAdCleaner){window.__vdAdCleaner=true;"
+            + "var run=function(){document.querySelectorAll('div,aside,section').forEach(function(el){"
+            + "if(el===document.body||el===document.documentElement||el.querySelector('video'))return;"
+            + "var t=(el.innerText||'').toLowerCase().slice(0,250);"
+            + "if(t.indexOf('you have (')<0&&t.indexOf('new video')<0&&t.indexOf('obtener bonificaci')<0&&t.indexOf('¡date prisa!')<0&&t.indexOf('reclama tu bono')<0)return;"
+            + "var st=getComputedStyle(el),r=el.getBoundingClientRect();"
+            + "if(r.width<80||r.height<30)return;"
+            + "if(st.position==='fixed'||st.position==='sticky'||(parseInt(st.zIndex,10)||0)>900){el.style.setProperty('display','none','important');}"
+            + "});};"
+            + "run();var timer=0;"
+            + "new MutationObserver(function(){if(timer)return;timer=setTimeout(function(){timer=0;run();},200);}).observe(document.documentElement,{childList:true,subtree:true});"
+            + "}"
+            + "}catch(e){}})()";
+        web.evaluateJavascript(cleanScript,null);
+    }
+
     private void navigate() {
         String url=address.getText().toString().trim();
         if(url.isEmpty()){Toast.makeText(this,"Introduce una dirección",Toast.LENGTH_SHORT).show();return;}

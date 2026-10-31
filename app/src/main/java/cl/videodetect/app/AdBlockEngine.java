@@ -159,7 +159,7 @@ public final class AdBlockEngine {
         void add(String raw){
             if(raw==null)return;
             String s=raw.trim();
-            if(s.isEmpty()||s.startsWith("!")||s.startsWith("[")||s.startsWith("#"))return;
+            if(s.isEmpty()||s.startsWith("!")||s.startsWith("[")||(s.startsWith("#")&&!s.startsWith("##")))return;
             if(s.contains("#@#")||s.contains("#?#")||s.contains("#$#"))return;
             int cosmeticIndex=s.indexOf("##");
             if(cosmeticIndex>=0){
