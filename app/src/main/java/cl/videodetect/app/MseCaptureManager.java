@@ -228,6 +228,14 @@ public final class MseCaptureManager {
             int realHeight=dimensions[1];
             boolean belowRequested=!"auto".equals(desiredQuality) && realHeight>0 &&
                 realHeight<Integer.parseInt(desiredQuality);
+            // Never silently export a lower-resolution movie when the user
+            // explicitly requested an HD rendition. Preserve temporary tracks.
+            if(!"auto".equals(desiredQuality) && (realHeight<=0 || belowRequested)){
+                throw new IOException("Solicitaste "+desiredQuality+"p, pero el MP4 contiene "+
+                   (realHeight>0?realHeight+"p":"resolución desconocida")+
+                   ". No se guardará como si fuera la calidad elegida. "+
+                   "El reproductor debe entregar una pista de inicialización de esa calidad.");
+            }
             String name="VideoDetect_"+(realHeight>0?realHeight+"p_":"")+System.currentTimeMillis()+".mp4";
             Uri created=publish(temp,name,"video/mp4");
             if(created==null)throw new IOException("No se pudo publicar en Descargas");
