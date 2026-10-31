@@ -29,6 +29,7 @@ import java.util.function.Consumer;
 public final class MediaDiagnostics {
     private final WebView web;
     private final Consumer<String> found;
+    private final MseCaptureManager capture;
     private final ArrayDeque<String> events=new ArrayDeque<>();
     private final Set<String> seen=new HashSet<>();
     private final Handler main=new Handler(Looper.getMainLooper());
@@ -105,8 +106,8 @@ public final class MediaDiagnostics {
     private int errors=0;
     private static final int MAX_EVENTS=300;
 
-    public MediaDiagnostics(WebView web,Consumer<String> consumer){
-        this.web=web;this.found=consumer;
+    public MediaDiagnostics(WebView web,Consumer<String> consumer,MseCaptureManager capture){
+        this.web=web;this.found=consumer;this.capture=capture;
         try{
             InputStream in=web.getContext().getAssets().open("media_monitor.js");
             ByteArrayOutputStream out=new ByteArrayOutputStream();
@@ -131,6 +132,10 @@ public final class MediaDiagnostics {
                            try{
                                JSONObject obj=new JSONObject(body);
                                String kind=obj.optString("kind","");
+                               if(kind.equals("capture-poll")||kind.equals("capture-chunk")){
+                                   if(capture!=null)capture.onMessage(obj,sourceOrigin,replyProxy);
+                                   return;
+                               }
                                if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
                                String value=obj.optString("url","");
                                String detail=obj.optString("detail","");
@@ -238,7 +243,7 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.8 (prueba)\n")
+           .append("Versión: 0.9 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")

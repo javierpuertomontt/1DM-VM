@@ -66,6 +66,8 @@ public class MainActivity extends Activity {
     private WebView web;
     private AdBlockEngine blocker;
     private MediaDiagnostics diagnostics;
+    private MseCaptureManager capture;
+    private TextView captureLabel, captureButton;
     private TextView protectionBadge;
     private EditText address;
     private LinearLayout root, content, bottom;
@@ -144,7 +146,8 @@ public class MainActivity extends Activity {
 
         web=new WebView(this);
         web.setBackgroundColor(WHITE);
-        diagnostics=new MediaDiagnostics(web, url -> discover(url));
+        capture=new MseCaptureManager(this, () -> refreshCaptureUi());
+        diagnostics=new MediaDiagnostics(web, url -> discover(url), capture);
         diagnostics.install();
         if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
             WebView.setWebContentsDebuggingEnabled(true);
@@ -281,7 +284,13 @@ public class MainActivity extends Activity {
         spaceRow(controls,button("← Atrás",false,()->{if(web.canGoBack())web.goBack();}));
         spaceRow(controls,button("↻ Recargar",false,()->{if(opened)web.reload();}));
         controls.addView(button("◎ Detectar videos",true,()->scan(true)),new LinearLayout.LayoutParams(0,-2,1.4f));
-        top.addView(controls);
+        top.addView(controls);gap(top,9);
+        captureButton=button(capture.isCapturing()?"■ Detener captura de audio + video":
+             capture.isBusy()?"Finalizando MP4…":"● Iniciar captura MP4",capture.isCapturing(),()->toggleCapture());
+        top.addView(captureButton);
+        gap(top,7);
+        captureLabel=text(capture.getStatus()+"\n"+capture.getStats(),12,MUTED,false);
+        top.addView(captureLabel);
         content.addView(top);
         if(!opened){
             ScrollView scroll=new ScrollView(this);LinearLayout intro=vertical();
@@ -302,6 +311,45 @@ public class MainActivity extends Activity {
             if(web.getParent()!=null)((ViewGroup)web.getParent()).removeView(web);
             content.addView(web,new LinearLayout.LayoutParams(-1,0,1));
         }
+    }
+
+    private void refreshCaptureUi(){
+        if(capture==null)return;
+        if(captureButton!=null){
+            captureButton.setText(capture.isCapturing()?"■ Detener captura de audio + video":
+                capture.isBusy()?"Finalizando MP4…":"● Iniciar captura MP4");
+            captureButton.setTextColor(capture.isCapturing()?BG:WHITE);
+            captureButton.setBackground(rounded(capture.isCapturing()?ACCENT:CARD,12,capture.isCapturing()?0:LINE));
+        }
+        if(captureLabel!=null)captureLabel.setText(capture.getStatus()+"\n"+capture.getStats());
+    }
+    private void toggleCapture(){
+        if(capture==null)return;
+        if(capture.isCapturing()){
+            capture.stop();
+            refreshCaptureUi();
+            Toast.makeText(this,"Preparando MP4; revisa Descargas luego de finalizar",Toast.LENGTH_LONG).show();
+            return;
+        }
+        if(capture.isBusy()){
+            Toast.makeText(this,"La exportación anterior sigue en curso",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if(!opened||web.getUrl()==null){
+            Toast.makeText(this,"Abre una página primero",Toast.LENGTH_LONG).show();return;
+        }
+        new AlertDialog.Builder(this).setTitle("Captura de audio y video")
+           .setMessage("Esta función graba los segmentos MP4 que el reproductor entrega a MediaSource mientras reproduce.\n\n"+
+             "Para incluir los segmentos iniciales, al comenzar se recargará la página: después pulsa Play y selecciona la calidad deseada. "+
+             "Mantén el navegador visible. Al terminar pulsa «Detener captura» para crear un MP4 en Descargas/VideoDetect.\n\n"+
+             "Es una función experimental: las transmisiones adaptativas o con DRM pueden no exportarse. Úsala únicamente con contenido que tengas derecho a guardar.")
+           .setNegativeButton("Cancelar",null)
+           .setPositiveButton("Iniciar y recargar",(dialog,which)->{
+               if(capture.start()){
+                   refreshCaptureUi();
+                   web.reload();
+               }else Toast.makeText(this,capture.getStatus(),Toast.LENGTH_LONG).show();
+           }).show();
     }
 
     private void refreshProtectionBadge(){
@@ -591,6 +639,26 @@ public class MainActivity extends Activity {
             catch(Exception e){Toast.makeText(this,"No se pudo abrir Descargas",Toast.LENGTH_LONG).show();}
         }),new LinearLayout.LayoutParams(0,-2,1));
         holder.addView(actions);gap(holder,16);
+        LinearLayout captureCard=vertical();
+        captureCard.setPadding(d(16),d(16),d(16),d(16));
+        captureCard.setBackground(rounded(CARD,14,LINE));
+        captureCard.addView(text("Captura MSE · audio + video",16,WHITE,true));
+        gap(captureCard,8);
+        captureCard.addView(text(capture.getStatus()+"\n"+capture.getStats(),13,MUTED,false));
+        if(capture.getSavedUri()!=null){
+            gap(captureCard,10);
+            captureCard.addView(button("▶ Abrir MP4 exportado",true,()->{
+                try{
+                    Intent view=new Intent(Intent.ACTION_VIEW);
+                    view.setDataAndType(capture.getSavedUri(),"video/mp4");
+                    view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(Intent.createChooser(view,"Abrir video"));
+                }catch(Exception e){
+                    Toast.makeText(this,"Puedes encontrar el archivo en Descargas/VideoDetect",Toast.LENGTH_LONG).show();
+                }
+            }));
+        }
+        holder.addView(captureCard);gap(holder,15);
         if(downloadIds.isEmpty()){
             LinearLayout card=vertical();card.setPadding(d(20),d(24),d(20),d(24));
             card.setBackground(rounded(CARD,16,LINE));
@@ -689,6 +757,7 @@ public class MainActivity extends Activity {
     @Override protected void onDestroy(){
         if(web!=null){if(web.getParent()!=null)((ViewGroup)web.getParent()).removeView(web);web.destroy();}
         inspectors.shutdownNow();scanner.removeCallbacksAndMessages(null);
+        if(capture!=null)capture.shutdown();
         super.onDestroy();
     }
 }

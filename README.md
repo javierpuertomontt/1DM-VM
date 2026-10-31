@@ -31,3 +31,7 @@ Monitoriza el tipo de SourceBuffer creado por el reproductor mediante MediaSourc
 
 ## v0.8: inspección de cabeceras y carga MSE
 A partir del diagnóstico de 1920x1080, MSE H.264/AAC y cero señales EME, esta versión añade el estado HTTP y tipo de contenido de respuestas `/cdn/down/` observadas por el propio reproductor, así como muestras de `SourceBuffer.appendBuffer` (solo número de bytes y codec, **nunca datos del buffer**). No modifica las solicitudes ni su reproducción y no captura claves ni descifra contenido. Sirve para determinar si hay respuestas de video estándar o procesamiento de un formato personalizado; un Content-Type `text/html` tampoco prueba por sí solo la naturaleza del contenido binario.
+
+
+## v0.9 (experimental): captura MediaSource y ensamblado MP4
+El usuario inicia explícitamente desde Navegador → **Iniciar captura MP4**. Se recarga la página para captar los segmentos de inicialización de las pistas AAC/H.264. El script inyectado conserva los buffers que ya fueron aceptados por `SourceBuffer.appendBuffer`, los envía al código Java en fragmentos de 12 KiB confirmados uno por uno, y Java los escribe por separado en `audio.fmp4` y `video.fmp4`. Al detener, `MediaExtractor` lee ambas pistas y `MediaMuxer` intenta producir el MP4 sin recodificar, publicado en Descargas/VideoDetect mediante MediaStore. La función es experimental: MediaExtractor puede no aceptar determinados fMP4 o cambios adaptativos; no se manipula DRM, no se extraen claves y no se reconstruyen los archivos `_enc` directamente.
