@@ -39,6 +39,9 @@ public final class MediaDiagnostics {
     private int segmentHits=0;
     private int mseBuffers=0;
     private int encryptedSignals=0;
+    private int fetchResponses=0;
+    private int mseAppendSamples=0;
+    private final Set<String> observedResponses=new java.util.LinkedHashSet<>();
     private final Set<String> renderedSizes=new java.util.LinkedHashSet<>();
     private final Set<String> observedCodecs=new java.util.LinkedHashSet<>();
     private static final Pattern CHUNK_PATH=Pattern.compile(
@@ -128,7 +131,7 @@ public final class MediaDiagnostics {
                            try{
                                JSONObject obj=new JSONObject(body);
                                String kind=obj.optString("kind","");
-                               if(!kind.matches("frame|iframe|source|resource|fetch|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
+                               if(!kind.matches("frame|iframe|source|resource|fetch|fetch-response|fetch-failed|mse-append|xhr|play|metadata|resize|mse|encrypted|media-error|js-error"))return;
                                String value=obj.optString("url","");
                                String detail=obj.optString("detail","");
                                if(value.length()>2100||detail.length()>120)return;
@@ -141,6 +144,11 @@ public final class MediaDiagnostics {
                                    if(observedCodecs.size()<20)observedCodecs.add(detail);
                                }
                                if("encrypted".equals(kind))encryptedSignals++;
+                               if("fetch-response".equals(kind)){
+                                   fetchResponses++;
+                                   if(observedResponses.size()<12)observedResponses.add(detail);
+                               }
+                               if("mse-append".equals(kind))mseAppendSamples++;
                                if(("resize".equals(kind)||"metadata".equals(kind))&&detail.matches("[0-9]{1,5}x[0-9]{1,5}")){
                                    if(renderedSizes.size()<30)renderedSizes.add(detail);
                                }
@@ -184,7 +192,8 @@ public final class MediaDiagnostics {
         return low.contains("/player/index.php")||low.contains("/embed/");
     }
     public void clear(){ synchronized(this){events.clear();seen.clear();mediaHits=0;segmentHits=0;streams.clear();frames=0;nativeHits=0;errors=0;
-           mseBuffers=0;encryptedSignals=0;renderedSizes.clear();observedCodecs.clear();} }
+           mseBuffers=0;encryptedSignals=0;renderedSizes.clear();observedCodecs.clear();
+           fetchResponses=0;mseAppendSamples=0;observedResponses.clear();} }
     private void event(String type,String url,String detail){
         String safe=safeUrl(url);
         String line=type+" | "+safe+" | "+shorten(detail,140);
@@ -214,6 +223,8 @@ public final class MediaDiagnostics {
         return "Solicitudes "+nativeHits+" · Eventos multimedia "+mediaHits+
           " · Fragmentos "+segmentHits+" · Marcos "+frames+" · Errores "+errors+
           "\nMSE: "+mseBuffers+" buffer(s) · Señales EME: "+encryptedSignals+
+          "\nRespuestas CDN: "+fetchResponses+" · Muestras appendBuffer: "+mseAppendSamples+
+          "\nCabeceras observadas: "+observedResponses+
           "\nResoluciones observadas: "+renderedSizes+
           "\nCodecs MSE: "+observedCodecs+
           "\nMonitor de iframes: "+(scriptSupported?"activo":"no disponible en este WebView");
@@ -227,7 +238,7 @@ public final class MediaDiagnostics {
     public synchronized String report(String current){
         StringBuilder out=new StringBuilder();
         out.append("VideoDetect - Diagnóstico de medios\n")
-           .append("Versión: 0.7 (prueba)\n")
+           .append("Versión: 0.8 (prueba)\n")
            .append("Android: ").append(android.os.Build.VERSION.RELEASE).append("\n")
            .append("Sitio: ").append(safeUrl(current)).append("\n")
            .append("Monitor de iframe: ").append(scriptSupported?"sí":"no").append("\n")

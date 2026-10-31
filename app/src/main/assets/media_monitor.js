@@ -88,16 +88,48 @@
     // Keep native return values and arguments unchanged. Never read segment bytes or keys.
     var MSE=window.MediaSource;
     if(MSE&&MSE.prototype&&typeof MSE.prototype.addSourceBuffer==="function"){
+      var bufferTypes=new WeakMap(),bufferCounts=new WeakMap();
       var originalBuffer=MSE.prototype.addSourceBuffer;
       MSE.prototype.addSourceBuffer=function(mime){
-        try{post("mse",location.href,String(mime));}catch(e){}
-        return originalBuffer.apply(this,arguments);
+        var buffer=originalBuffer.apply(this,arguments);
+        try{bufferTypes.set(buffer,String(mime));post("mse",location.href,String(mime));}catch(e){}
+        return buffer;
       };
+      if(window.SourceBuffer&&SourceBuffer.prototype&&typeof SourceBuffer.prototype.appendBuffer==="function"){
+        var originalAppend=SourceBuffer.prototype.appendBuffer;
+        SourceBuffer.prototype.appendBuffer=function(bytes){
+          try{
+            var count=(bufferCounts.get(this)||0)+1;
+            bufferCounts.set(this,count);
+            if(count<=3||count===10||count%25===0){
+              var size=bytes&&typeof bytes.byteLength==="number"?bytes.byteLength:-1;
+              post("mse-append",location.href,
+                "buffer="+String(bufferTypes.get(this)||"unknown")+
+                " count="+count+" bytes="+size);
+            }
+          }catch(e){}
+          return originalAppend.apply(this,arguments);
+        };
+      }
     }
     var originalFetch=window.fetch;
     if(typeof originalFetch==="function")window.fetch=function(input){
-      try{post("fetch",typeof input==="string"?input:input.url,"fetch");}catch(e){}
-      return originalFetch.apply(this,arguments);
+      var requestUrl="";
+      try{requestUrl=typeof input==="string"?input:input&&input.url||"";post("fetch",requestUrl,"fetch");}catch(e){}
+      var promise=originalFetch.apply(this,arguments);
+      try{
+        if(promise&&typeof promise.then==="function"&&requestUrl.indexOf("/cdn/down/")!==-1){
+          promise.then(function(response){
+            try{
+              var type=response.headers.get("content-type")||"(sin tipo)";
+              var size=response.headers.get("content-length")||"?";
+              post("fetch-response",requestUrl,
+                "HTTP "+response.status+" tipo="+type+" tamaño="+size);
+            }catch(e){}
+          },function(error){post("fetch-failed",requestUrl,"solicitud rechazada");});
+        }
+      }catch(e){}
+      return promise;
     };
     var oldOpen=XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open=function(method,url){

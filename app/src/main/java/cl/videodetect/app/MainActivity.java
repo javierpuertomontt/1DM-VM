@@ -631,7 +631,7 @@ public class MainActivity extends Activity {
         area.setPadding(d(16),d(17),d(16),d(18));
         area.addView(text("Diagnóstico de video",23,WHITE,true));
         gap(area,8);
-        area.addView(text("Registra reproductores, solicitudes multimedia y secuencias de fragmentos. No necesitas una computadora.",14,MUTED,false));
+        area.addView(text("Registra reproductores, fragmentos, tipos HTTP y actividad de buffers de audio/video. No guarda el contenido multimedia.",14,MUTED,false));
         gap(area,18);
         LinearLayout instructions=vertical();
         instructions.setPadding(d(16),d(16),d(16),d(16));

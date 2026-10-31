@@ -27,3 +27,7 @@ El informe mostró solicitudes a `/cdn/down/<id>/1080_enc/<numero>.html` en `xsp
 
 ## v0.7: Diagnóstico MediaSource / EME
 Monitoriza el tipo de SourceBuffer creado por el reproductor mediante MediaSource.addSourceBuffer, los cambios de resolución observada (evento resize), y el aviso 'encrypted' del navegador (sin recoger datos de cifrado ni llaves). No realiza bypass de DRM ni guarda las cargas útiles. Se exportan únicamente MIME, codecs, dimensiones y señales de existencia. Sirve para diagnosticar la reproducción y elegir un flujo de descarga compatible cuando esté autorizado.
+
+
+## v0.8: inspección de cabeceras y carga MSE
+A partir del diagnóstico de 1920x1080, MSE H.264/AAC y cero señales EME, esta versión añade el estado HTTP y tipo de contenido de respuestas `/cdn/down/` observadas por el propio reproductor, así como muestras de `SourceBuffer.appendBuffer` (solo número de bytes y codec, **nunca datos del buffer**). No modifica las solicitudes ni su reproducción y no captura claves ni descifra contenido. Sirve para determinar si hay respuestas de video estándar o procesamiento de un formato personalizado; un Content-Type `text/html` tampoco prueba por sí solo la naturaleza del contenido binario.
