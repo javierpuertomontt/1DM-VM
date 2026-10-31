@@ -65,6 +65,7 @@ public class MainActivity extends Activity {
     private String lastPageUrl="";
     private WebView web;
     private AdBlockEngine blocker;
+    private MediaDiagnostics diagnostics;
     private TextView protectionBadge;
     private EditText address;
     private LinearLayout root, content, bottom;
@@ -143,6 +144,10 @@ public class MainActivity extends Activity {
 
         web=new WebView(this);
         web.setBackgroundColor(WHITE);
+        diagnostics=new MediaDiagnostics(web, url -> discover(url));
+        diagnostics.install();
+        if((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0)
+            WebView.setWebContentsDebuggingEnabled(true);
         WebSettings s=web.getSettings();
         s.setJavaScriptEnabled(true);s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
@@ -154,6 +159,7 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest req) {
                 Uri uri=req.getUrl();
+                diagnostics.recordNetwork(uri.toString(),req.isForMainFrame());
                 if(blocker.blocks(uri.toString()))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));
                 discover(uri.toString());
                 return super.shouldInterceptRequest(v,req);
@@ -176,6 +182,7 @@ public class MainActivity extends Activity {
             @Override public void onPageFinished(WebView v,String url) {
                 if(tab==0 && address!=null)address.setText(url);
                 applyPageFilters();
+                diagnostics.onPageFinished(url);
                 scan(false);
                 scanner.postDelayed(()->{if(web!=null && opened && url.equals(web.getUrl()))scan(false);},1300);
                 scanner.postDelayed(()->{if(web!=null && opened && url.equals(web.getUrl()))scan(false);},4000);
@@ -195,11 +202,11 @@ public class MainActivity extends Activity {
     private String typeOf(String url) {
         if(url==null)return null;
         String path=url.split("[?#]",2)[0].toLowerCase(Locale.ROOT);
-        if(path.matches(".*\\.(mp4|m4v)$"))return "MP4";
-        if(path.endsWith(".webm"))return "WebM";
-        if(path.endsWith(".m3u8"))return "HLS";
-        if(path.endsWith(".mpd"))return "DASH";
-        if(path.matches(".*\\.(mp3|m4a|aac|wav|flac)$"))return "Audio";
+        if(path.matches(".*\\.(mp4|m4v)(/)?$"))return "MP4";
+        if(path.matches(".*\\.webm(/)?$"))return "WebM";
+        if(path.matches(".*\\.m3u8(/)?$"))return "HLS";
+        if(path.matches(".*\\.mpd(/)?$"))return "DASH";
+        if(path.matches(".*\\.(mp3|m4a|aac|wav|flac)(/)?$"))return "Audio";
         Uri uri=Uri.parse(url);
         String host=uri.getHost()==null?"":uri.getHost().toLowerCase(Locale.ROOT);
         // Known embed host from the HTML sample. This is a player URL, not an MP4.
@@ -239,10 +246,10 @@ public class MainActivity extends Activity {
     }
     private void show(int selected) {
         tab=selected;content.removeAllViews();bottom.removeAllViews();
-        String[] names={"Navegador","Videos ("+media.size()+")","Descargas"};
-        for(int i=0;i<3;i++){
+        String[] names={"Navegador","Videos ("+media.size()+")","Descargas","Diagnóstico"};
+        for(int i=0;i<4;i++){
             final int target=i;
-            TextView item=text(names[i],13,i==tab?BG:MUTED,i==tab);
+            TextView item=text(names[i],11,i==tab?BG:MUTED,i==tab);
             item.setGravity(Gravity.CENTER);
             item.setPadding(d(6),d(15),d(6),d(15));
             item.setBackground(rounded(i==tab?ACCENT:Color.TRANSPARENT,12,0));
@@ -250,7 +257,7 @@ public class MainActivity extends Activity {
             p.setMargins(d(3),0,d(3),0);bottom.addView(item,p);
             item.setOnClickListener(v->show(target));
         }
-        if(tab==0)showBrowser();else if(tab==1)showMedia();else showDownloads();
+        if(tab==0)showBrowser();else if(tab==1)showMedia();else if(tab==2)showDownloads();else showDiagnostics();
     }
     private void showBrowser() {
         LinearLayout top=vertical();top.setPadding(d(14),d(14),d(14),d(12));
@@ -599,6 +606,59 @@ public class MainActivity extends Activity {
         }
         scroll.addView(holder);content.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
     }
+
+    private void showDiagnostics() {
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout area=vertical();
+        area.setPadding(d(16),d(17),d(16),d(18));
+        area.addView(text("Diagnóstico de video",23,WHITE,true));
+        gap(area,8);
+        area.addView(text("Registra eventos del navegador y de reproductores incrustados. No necesitas una computadora.",14,MUTED,false));
+        gap(area,18);
+        LinearLayout instructions=vertical();
+        instructions.setPadding(d(16),d(16),d(16),d(16));
+        instructions.setBackground(rounded(CARD,14,LINE));
+        instructions.addView(text("PRUEBA RECOMENDADA",13,ACCENT,true));
+        gap(instructions,10);
+        instructions.addView(text("1. Abre la página desde Navegador.\n2. Intenta reproducir el video durante 15 segundos.\n3. Vuelve a Diagnóstico y pulsa «Actualizar».\n4. Pulsa «Compartir informe» y envíame el texto.",15,WHITE,false));
+        area.addView(instructions);
+        gap(area,14);
+        area.addView(text(diagnostics.getStatus(),13,ACCENT,true));
+        gap(area,10);
+        LinearLayout buttons=horizontal();
+        spaceRow(buttons,button("↻ Actualizar",false,()->show(3)));
+        spaceRow(buttons,button("Limpiar",false,()->{diagnostics.clear();show(3);}));
+        buttons.addView(button("Compartir informe",true,()->shareDiagnosis()),new LinearLayout.LayoutParams(0,-2,1.5f));
+        area.addView(buttons);
+        gap(area,14);
+        area.addView(text("EVENTOS OBSERVADOS · "+diagnostics.size(),12,MUTED,true));
+        gap(area,8);
+        String visible=diagnostics.preview();
+        TextView log=text(visible.isEmpty()?"Todavía no hay eventos. Abre una página e intenta reproducir un video.":visible,12,WHITE,false);
+        log.setTextIsSelectable(true);
+        log.setPadding(d(13),d(13),d(13),d(13));
+        log.setBackground(rounded(CARD,12,LINE));
+        area.addView(log);
+        gap(area,16);
+        area.addView(text("Privacidad: el informe elimina parámetros de consulta, que pueden contener claves temporales o identificadores. Revisa el texto antes de compartirlo. No registra contraseñas ni contenido de formularios.",12,MUTED,false));
+        scroll.addView(area);
+        content.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+    }
+    private void shareDiagnosis(){
+        String report=diagnostics.report(web==null?"":web.getUrl());
+        new AlertDialog.Builder(this).setTitle("Compartir diagnóstico")
+          .setMessage("El reporte no contiene parámetros de consulta de los enlaces. Revisa igualmente la información del sitio antes de enviarla.")
+          .setNegativeButton("Cancelar",null)
+          .setNeutralButton("Copiar texto",(dialog,which)->copy(report))
+          .setPositiveButton("Compartir",(dialog,which)->{
+              Intent send=new Intent(Intent.ACTION_SEND);
+              send.setType("text/plain");
+              send.putExtra(Intent.EXTRA_SUBJECT,"VideoDetect - Diagnóstico multimedia");
+              send.putExtra(Intent.EXTRA_TEXT,report);
+              startActivity(Intent.createChooser(send,"Compartir diagnóstico"));
+          }).show();
+    }
+
     private void copy(String s) {
         ((ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE))
             .setPrimaryClip(ClipData.newPlainText("Enlace multimedia",s));
