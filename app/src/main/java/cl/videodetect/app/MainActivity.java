@@ -55,10 +55,14 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(163, 178, 199);
     private static final int WHITE = Color.WHITE;
     private static final int ACCENT = Color.rgb(47, 203, 188);
-    private static final String SCAN_SCRIPT = "(function(){var a=[];function add(x){if(x&&typeof x==='string')a.push(x)}document.querySelectorAll('video,source,audio').forEach(function(n){add(n.currentSrc);add(n.src);add(n.getAttribute('data-src'))});document.querySelectorAll('[data-video],[data-file],[data-hls]').forEach(function(n){['data-video','data-file','data-hls'].forEach(function(k){add(n.getAttribute(k))})});return JSON.stringify(a)})()";
+    private static final String SCAN_SCRIPT = "(function(){var a=[],seen={};function add(s){if(typeof s==='string'&&s.length>5&&!seen[s]){seen[s]=1;a.push(s)}}document.querySelectorAll('video,source,audio,iframe[src],a[href],*[data-video],*[data-file],*[data-hls],*[data-src]').forEach(function(n){add(n.currentSrc);add(n.src);var h=n.getAttribute('href');if(h&&(/\\\\.(mp4|webm|m3u8|mpd)([?#]|$)/i.test(h)))add(h);['data-src','data-video','data-file','data-hls'].forEach(function(k){add(n.getAttribute(k))})});try{performance.getEntriesByType('resource').forEach(function(r){add(r.name)})}catch(e){}return JSON.stringify(a)})()";
     private final Map<String,Media> media = new LinkedHashMap<>();
     private final Set<String> ads = new HashSet<>(Arrays.asList("doubleclick.net","googlesyndication.com","googleadservices.com","popads.net","popcash.net","exoclick.com","exosrv.com","adsterra.com","onclickads.net","propellerads.com","trafficjunky.net","juicyads.com","adskeeper.co.uk"));
     private final List<Long> downloadIds = new ArrayList<>();
+    private final android.os.Handler scanner = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final java.util.concurrent.ExecutorService inspectors=java.util.concurrent.Executors.newFixedThreadPool(2);
+    private final Set<String> inspected = java.util.Collections.synchronizedSet(new HashSet<>());
+    private String lastPageUrl="";
     private WebView web;
     private AdBlockEngine blocker;
     private TextView protectionBadge;
@@ -75,10 +79,10 @@ public class MainActivity extends Activity {
             this.url = url; this.type = type;
             Uri uri = Uri.parse(url);
             String path = uri.getLastPathSegment();
-            filename = path == null || path.trim().isEmpty() ? "video" : Uri.decode(path);
+            filename = "Reproductor".equals(type) ? "Reproductor incrustado" : path == null || path.trim().isEmpty() ? "video" : Uri.decode(path);
             host = uri.getHost() == null ? "Sitio web" : uri.getHost();
             Matcher m = Pattern.compile("(?i)(?:^|[^0-9])(2160|1440|1080|720|480|360|240)p(?:[^0-9]|$)").matcher(url);
-            quality = m.find() ? m.group(1) + "p" : "Sin indicar";
+            quality = "Reproductor".equals(type) ? "Abrir y reproducir" : m.find() ? m.group(1) + "p" : "Sin indicar";
         }
     }
     private int d(float n) { return (int)(getResources().getDisplayMetrics().density*n + 0.5f); }
@@ -173,6 +177,8 @@ public class MainActivity extends Activity {
                 if(tab==0 && address!=null)address.setText(url);
                 applyPageFilters();
                 scan(false);
+                scanner.postDelayed(()->{if(web!=null && opened && url.equals(web.getUrl()))scan(false);},1300);
+                scanner.postDelayed(()->{if(web!=null && opened && url.equals(web.getUrl()))scan(false);},4000);
             }
         });
         web.setDownloadListener((url,userAgent,disposition,mime,len) -> {
@@ -194,12 +200,24 @@ public class MainActivity extends Activity {
         if(path.endsWith(".m3u8"))return "HLS";
         if(path.endsWith(".mpd"))return "DASH";
         if(path.matches(".*\\.(mp3|m4a|aac|wav|flac)$"))return "Audio";
+        Uri uri=Uri.parse(url);
+        String host=uri.getHost()==null?"":uri.getHost().toLowerCase(Locale.ROOT);
+        // Known embed host from the HTML sample. This is a player URL, not an MP4.
+        if(host.equals("moviekh.xtremestream.xyz") && path.contains("/player/index.php"))return "Reproductor";
+        if(host.equals("player.vimeo.com") && path.contains("/video/"))return "Reproductor";
+        if(host.equals("www.youtube-nocookie.com") && path.contains("/embed/"))return "Reproductor";
         return null;
     }
     private void discover(String url) {
         if(url==null||!url.startsWith("http"))return;
         String kind=typeOf(url);if(kind==null)return;
-        runOnUiThread(() -> { if(!media.containsKey(url))media.put(url,new Media(url,kind)); });
+        runOnUiThread(() -> {
+            if(!media.containsKey(url)){
+                media.put(url,new Media(url,kind));
+                if("Reproductor".equals(kind))inspectPlayer(url);
+                else if("HLS".equals(kind))inspectHls(url);
+            }
+        });
     }
     private void scan(boolean notify) {
         if(!opened)return;
@@ -216,7 +234,7 @@ public class MainActivity extends Activity {
                     }catch(Exception ignored){}
                 }
             } catch(Exception ignored){}
-            if(notify){Toast.makeText(this,"Escaneo terminado: "+media.size()+" archivos.",Toast.LENGTH_SHORT).show();show(1);}
+            if(notify){Toast.makeText(this,"Detección: "+media.size()+" fuentes encontradas.",Toast.LENGTH_SHORT).show();show(1);}
         });
     }
     private void show(int selected) {
@@ -343,16 +361,18 @@ public class MainActivity extends Activity {
     private void showMedia() {
         ScrollView scroll=new ScrollView(this);LinearLayout holder=vertical();
         holder.setPadding(d(16),d(18),d(16),d(18));
-        holder.addView(text("Archivos detectados",23,WHITE,true));gap(holder,6);
-        holder.addView(text("Encontrados durante la navegación: "+media.size()+". Se muestra la resolución solo si el enlace la indica.",13,MUTED,false));gap(holder,15);
+        holder.addView(text("Videos y reproductores",23,WHITE,true));gap(holder,6);
+        int ready=0, players=0;
+        for(Media m:media.values()){if("Reproductor".equals(m.type))players++;else ready++;}
+        holder.addView(text(ready+" archivos / transmisiones detectados · "+players+" reproductores incrustados. Las resoluciones se muestran solo cuando están indicadas.",13,MUTED,false));gap(holder,15);
         LinearLayout options=horizontal();
-        spaceRow(options,button("Seleccionar todos",false,()->{for(Media m:media.values())m.selected=true;show(1);}));
+        spaceRow(options,button("Seleccionar todos",false,()->{for(Media m:media.values())if(!"Reproductor".equals(m.type))m.selected=true;show(1);}));
         spaceRow(options,button("Limpiar lista",false,()->{media.clear();show(1);}));
         options.addView(button("Buscar más",true,()->show(0)),new LinearLayout.LayoutParams(0,-2,1));
         holder.addView(options);gap(holder,14);
         if(media.isEmpty()){
             LinearLayout empty=vertical();empty.setBackground(rounded(CARD,16,LINE));empty.setPadding(d(20),d(24),d(20),d(24));
-            empty.addView(text("Todavía no hay videos",19,WHITE,true));gap(empty,10);
+            empty.addView(text("Todavía no se detectaron fuentes",19,WHITE,true));gap(empty,10);
             empty.addView(text("1. Abre la pestaña Navegador.\n2. Reproduce un video en la página.\n3. Pulsa Detectar videos.\n\nAquí aparecerán los formatos y las distintas resoluciones encontradas.",15,MUTED,false));
             holder.addView(empty);
         }
@@ -362,7 +382,7 @@ public class MainActivity extends Activity {
             TextView check=text(item.selected?"☑":"☐",27,ACCENT,true);
             first.addView(check,new LinearLayout.LayoutParams(d(40),d(44)));
             LinearLayout details=vertical();
-            details.addView(text(item.type+"   •   "+item.quality,14,ACCENT,true));
+            details.addView(text(item.type+"   •   "+displayQuality(item),14,ACCENT,true));
             TextView name=text(item.filename,15,WHITE,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);
             details.addView(name);
             TextView domain=text(item.host,12,MUTED,false);details.addView(domain);
@@ -371,7 +391,9 @@ public class MainActivity extends Activity {
             card.addView(first);gap(card,12);
             LinearLayout row=horizontal();
             spaceRow(row,button("Copiar enlace",false,()->copy(item.url)));
-            row.addView(button("↓ Descargar",true,()->confirmDownload(item.url)),new LinearLayout.LayoutParams(0,-2,1));
+            row.addView(button("Reproductor".equals(item.type) ? "▶ Abrir reproductor" : "↓ Descargar",true,
+                ()->{if("Reproductor".equals(item.type))openPlayer(item.url);else confirmDownload(item.url);}),
+                new LinearLayout.LayoutParams(0,-2,1));
             card.addView(row);
             holder.addView(card);gap(holder,10);
         }
@@ -387,7 +409,7 @@ public class MainActivity extends Activity {
     private void downloadSelected(){
         int count=0, unsupported=0;
         for(Media m:media.values())if(m.selected){
-            if(m.type.equals("HLS")||m.type.equals("DASH"))unsupported++;
+            if(m.type.equals("HLS")||m.type.equals("DASH")||m.type.equals("Reproductor"))unsupported++;
             else {enqueue(m.url);count++;}
         }
         if(count==0 && unsupported==0){Toast.makeText(this,"Selecciona al menos un archivo",Toast.LENGTH_SHORT).show();return;}
@@ -398,6 +420,7 @@ public class MainActivity extends Activity {
     }
     private void confirmDownload(String url) {
         String type=typeOf(url);
+        if("Reproductor".equals(type)){openPlayer(url);return;}
         if(type==null||type.equals("HLS")||type.equals("DASH")){
             new AlertDialog.Builder(this).setTitle("Transmisión detectada")
                 .setMessage("HLS/DASH requiere procesar una lista de segmentos. Esta versión no lo descarga todavía. Puedes copiar la dirección del recurso.")
@@ -410,6 +433,101 @@ public class MainActivity extends Activity {
             .setPositiveButton("Descargar",(a,b)->{enqueue(url);show(2);})
             .setNegativeButton("Cancelar",null).show();
     }
+    private void openPlayer(String url) {
+        new AlertDialog.Builder(this).setTitle("Reproductor encontrado")
+          .setMessage("Este enlace abre el reproductor del video, pero todavía no es un archivo MP4. Al abrirlo, pulsa Play y regresa a Videos para revisar si aparecen las fuentes de descarga.")
+          .setNegativeButton("Cerrar",null)
+          .setPositiveButton("Abrir reproductor",(dialog,which)->{
+              opened=true;
+              String referer=web.getUrl();
+              show(0);
+              if(referer!=null&&referer.startsWith("http")){
+                  java.util.Map<String,String> headers=new java.util.HashMap<>();
+                  headers.put("Referer",referer);
+                  web.loadUrl(url,headers);
+              }else web.loadUrl(url);
+          }).show();
+    }
+
+    private void inspectPlayer(String url) {
+        if(!inspected.add("player:"+url))return;
+        inspectors.execute(()->{
+            String html=fetchSmallText(url);
+            if(html!=null){
+                collectMediaUrls(html,url);
+            }
+        });
+    }
+    private void inspectHls(String url) {
+        if(!inspected.add("hls:"+url))return;
+        inspectors.execute(()->{
+            String playlist=fetchSmallText(url);
+            if(playlist==null||!playlist.contains("#EXTM3U"))return;
+            String[] lines=playlist.replace("\\r","").split("\\n");
+            for(int i=0;i<lines.length;i++){
+                if(!lines[i].startsWith("#EXT-X-STREAM-INF:"))continue;
+                String info=lines[i];
+                String quality="";
+                java.util.regex.Matcher match=java.util.regex.Pattern.compile("RESOLUTION=\\d+x(\\d+)").matcher(info);
+                if(match.find())quality=match.group(1)+"p";
+                int j=i+1;
+                while(j<lines.length&&lines[j].trim().isEmpty())j++;
+                if(j>=lines.length||lines[j].startsWith("#"))continue;
+                try {
+                    final String variant=new URL(new URL(url),lines[j].trim()).toString();
+                    final String label=quality;
+                    runOnUiThread(()->addHlsVariant(variant,label));
+                }catch(Exception ignored){}
+            }
+        });
+    }
+    private void addHlsVariant(String url,String quality){
+        if(media.containsKey(url))return;
+        Media m=new Media(url,"HLS");
+        media.put(url,m);
+        playlistLabels.put(url,quality);
+    }
+    private final Map<String,String> playlistLabels = new java.util.HashMap<>();
+    private String displayQuality(Media item){
+        String custom=playlistLabels.get(item.url);
+        return custom==null||custom.isEmpty()?item.quality:custom;
+    }
+    private String fetchSmallText(String url){
+        java.net.HttpURLConnection connection=null;
+        try{
+            URL target=new URL(url);
+            if(!"https".equalsIgnoreCase(target.getProtocol()))return null;
+            connection=(java.net.HttpURLConnection)target.openConnection();
+            connection.setConnectTimeout(6500);connection.setReadTimeout(8500);
+            connection.setRequestProperty("User-Agent",web.getSettings().getUserAgentString());
+            String cookie=CookieManager.getInstance().getCookie(url);
+            if(cookie!=null)connection.setRequestProperty("Cookie",cookie);
+            String ref=web.getUrl();
+            if(ref!=null&&ref.startsWith("https://"))connection.setRequestProperty("Referer",ref);
+            if(connection.getResponseCode()!=200)return null;
+            try(java.io.InputStream in=connection.getInputStream();
+                java.io.ByteArrayOutputStream out=new java.io.ByteArrayOutputStream()){
+                byte[] buf=new byte[8192];int n,total=0;
+                while((n=in.read(buf))!=-1){total+=n;if(total>900000)return null;out.write(buf,0,n);}
+                return out.toString("UTF-8");
+            }
+        }catch(Exception e){return null;}
+        finally{if(connection!=null)connection.disconnect();}
+    }
+    private void collectMediaUrls(String html,String base){
+        // Only parse literal URLs in player markup; never execute embedded scripts.
+        String decoded=html.replace("\\\\/","/").replace("&amp;","&");
+        java.util.regex.Matcher matcher=java.util.regex.Pattern.compile(
+            "(?i)(?:https?:)?//[^\\s\\\"'<>\\\\]{5,600}?\\.(?:mp4|m4v|webm|m3u8|mpd)(?:\\?[^\\s\\\"'<>\\\\]{0,250})?"
+        ).matcher(decoded);
+        int count=0;
+        while(matcher.find()&&count++<40){
+            String candidate=matcher.group();
+            if(candidate.startsWith("//"))candidate="https:"+candidate;
+            discover(candidate);
+        }
+    }
+
     private void enqueue(String url) {
         try {
             String type=typeOf(url);
@@ -492,6 +610,7 @@ public class MainActivity extends Activity {
     }
     @Override protected void onDestroy(){
         if(web!=null){if(web.getParent()!=null)((ViewGroup)web.getParent()).removeView(web);web.destroy();}
+        inspectors.shutdownNow();scanner.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
 }
