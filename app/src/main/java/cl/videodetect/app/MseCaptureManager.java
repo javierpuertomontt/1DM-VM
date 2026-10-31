@@ -84,6 +84,19 @@ public final class MseCaptureManager {
             if(!next.equals(observedQuality)){observedQuality=next;update();}
         }catch(Exception ignored){}
     }
+    public void onQualitySignal(String kind,String detail){
+        if(!capturing)return;
+        if("capture-ready".equals(kind)){
+            status="Captura preparada. Cabecera de video MP4 recibida para "+
+               ("auto".equals(desiredQuality)?"modo automático":desiredQuality+"p")+
+               ". Mantén la calidad estable y reproduce desde el inicio.";
+        }else if("capture-wait".equals(kind)){
+            status="Esperando la cabecera MP4 real de "+desiredQuality+
+               "p. Selecciona esa calidad dentro del reproductor. "+
+               "No se guardará una versión inferior como "+desiredQuality+"p.";
+        }
+        update();
+    }
     public String getLastResult(){return lastResult;}
     public synchronized boolean start(String quality){
         if(isBusy()||stoppedPermanently)return false;
