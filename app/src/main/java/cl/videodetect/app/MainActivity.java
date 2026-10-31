@@ -291,6 +291,8 @@ public class MainActivity extends Activity {
         gap(top,7);
         captureLabel=text(capture.getStatus()+"\n"+capture.getStats(),12,MUTED,false);
         top.addView(captureLabel);
+        gap(top,6);
+        top.addView(text("Las calidades HD pueden aparecer después de Play. Selecciónalas también en el reproductor. La calidad exportada se verificará.",11,MUTED,false));
         content.addView(top);
         if(!opened){
             ScrollView scroll=new ScrollView(this);LinearLayout intro=vertical();
@@ -353,31 +355,29 @@ public class MainActivity extends Activity {
             }catch(Exception ignored){}
         }
         java.util.Collections.sort(heights,java.util.Collections.reverseOrder());
-        // If no quality was captured yet, show standard requests as unverified.
-        boolean verified=!heights.isEmpty();
-        if(heights.isEmpty()){heights.add(1080);heights.add(720);heights.add(480);}
+        // Every resolution remains selectable; the site may expose 1080p only after Play.
+        for(Integer h:new Integer[]{2160,1440,1080,720,480,360,240})options.add(h.toString());
         for(Integer h:heights)options.add(h.toString());
         String[] codes=options.toArray(new String[0]);
         String[] names=new String[codes.length];
         int selected=0;
         for(int i=0;i<codes.length;i++){
             String q=codes[i];
-            names[i]=q.equals("auto")?"Mejor disponible (automático)":
-                q+"p"+(verified?" · observado en esta sesión":" · sin verificar");
+            names[i]=q.equals("auto")?"Automático (según reproductor)":
+                q+"p"+(heights.contains(Integer.parseInt(q))?" · solicitada por la página":" · aún no verificada tras Play");
             if(q.equals(suggested))selected=i;
         }
         final int[] chosen={selected};
         new AlertDialog.Builder(this)
-          .setTitle("Calidad deseada (verificar en reproductor)")
+          .setTitle("Calidad que deseas capturar")
           .setSingleChoiceItems(names,selected,(dialog,index)->chosen[0]=index)
           .setNegativeButton("Cancelar",null)
           .setPositiveButton("Iniciar captura",(dialog,which)->{
               String wanted=codes[chosen[0]];
               if(capture.start(wanted)){
                   refreshCaptureUi();
-                  web.reload();
-                  Toast.makeText(this,"Calidad solicitada: "+("auto".equals(wanted)?"máxima":wanted+"p")+
-                      ". Revisa el selector del reproductor antes de Play.",Toast.LENGTH_LONG).show();
+                  Toast.makeText(this,"Sin recarga. Selecciona "+("auto".equals(wanted)?"calidad alta":wanted+"p")+
+                      " en el menú del reproductor y vuelve al inicio del video.",Toast.LENGTH_LONG).show();
               }else Toast.makeText(this,capture.getStatus(),Toast.LENGTH_LONG).show();
           }).show();
     }
