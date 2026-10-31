@@ -11,6 +11,8 @@
   var capInitAudio=null,capInitVideo=null,capInitVideosByHeight={},capInitVideoHeight=0,
       capRecordingHeight=0,capBlocked=false;
   var capInitSent={audio:false,video:false},capWaitReported=false;
+  var capZeroReady=false,capZeroSeekPending=false,capZeroAttempt=0,
+      capZeroRetryAt=0,capZeroLastStatus="";
   function mseInit(bytes){
     try{
       var a=bytes instanceof ArrayBuffer?new Uint8Array(bytes):
@@ -60,11 +62,16 @@
     return true;
   }
   function ensureInitialization(){
-    if(!capEnabled||!capSession)return;
+    if(!capEnabled||!capSession||!capZeroReady)return;
     if(!capInitSent.video){
       var videoInit=capPreferredQuality==="auto"?capInitVideo:
         capInitVideosByHeight[String(capPreferredQuality)]||null;
       if(videoInit){
+        var node=document.querySelector("video");
+        if(node&&isFinite(node.currentTime)&&node.currentTime>0.55){
+          requestRewind(node,"calidad "+(capPreferredQuality==="auto"?"actual":capPreferredQuality+"p"));
+          return;
+        }
         capInitSent.video=true;
         capRecordingHeight=capPreferredQuality==="auto"?capInitVideoHeight:parseInt(capPreferredQuality,10);
         captureBuffer("video",videoInit);
@@ -83,6 +90,84 @@
   var capSession="",capEnabled=false,capQueue=[],capQueuedBytes=0,
       capCurrent=null,capPending=0,capSeq=0,capSending=false,
       capBufferLimit=24*1024*1024;
+
+  function requestRewind(video,reason){
+    if(!video||capZeroSeekPending||capBlocked)return;
+    capZeroReady=false;capZeroSeekPending=true;capZeroAttempt++;
+    capZeroRetryAt=Date.now()+1500;
+    try{
+      var current=Number(video.currentTime||0);
+      if(!isFinite(current))current=0;
+      try{video.pause();}catch(e){}
+      var completed=false;
+      function done(){
+        if(completed)return;completed=true;capZeroSeekPending=false;
+        try{video.removeEventListener("seeked",done);}catch(e){}
+        var pos=Number(video.currentTime||0);
+        capZeroReady=isFinite(pos)&&pos<=0.6;
+        if(capZeroReady){
+          if(capZeroLastStatus!=="confirmed"){
+            capZeroLastStatus="confirmed";
+            post("capture-zero",location.href,"inicio "+pos.toFixed(2)+"s "+reason);
+          }
+          ensureInitialization();
+          try{video.play().catch(function(){});}catch(e){}
+        }else if(capZeroAttempt>=3){
+          post("capture-start-failed",location.href,"no regresó a 0:00; posición "+pos.toFixed(1)+"s");
+        }
+      }
+      video.addEventListener("seeked",done,{once:true});
+      video.currentTime=0;
+      if(Number(video.currentTime||0)<=0.3)setTimeout(done,350);
+      else setTimeout(done,1500);
+      post("capture-seek",location.href,"retrocediendo desde "+current.toFixed(1)+"s");
+    }catch(e){
+      capZeroSeekPending=false;
+      post("capture-start-failed",location.href,"el reproductor rechazó el salto a 0:00");
+    }
+  }
+  function prepareZeroStart(){
+    if(!capEnabled||!capSession||capBlocked)return false;
+    var host="";
+    try{host=location.hostname.toLowerCase();}catch(e){}
+    if(host.indexOf("xtremestream.xyz")<0)return false;
+    try{
+      if(sessionStorage.getItem("videodetect-last-restart")!==capSession){
+        sessionStorage.setItem("videodetect-last-restart",capSession);
+        post("capture-restart",location.href,"reiniciando reproductor incrustado");
+        location.reload();
+        return false;
+      }
+    }catch(e){
+      if(capZeroLastStatus!=="no-storage"){
+        capZeroLastStatus="no-storage";
+        post("capture-restart",location.href,"no hay sessionStorage, se usará seek a 0:00");
+      }
+    }
+    var video=null;
+    try{video=document.querySelector("video");}catch(e){}
+    if(!video)return false;
+    if(capZeroReady)return true;
+    if(capZeroSeekPending||Date.now()<capZeroRetryAt)return false;
+    var current=Number(video.currentTime||0);
+    if(!isFinite(current)||current>0.5){
+      if(capZeroAttempt>=3){
+        if(capZeroLastStatus!=="failed"){
+          capZeroLastStatus="failed";
+          post("capture-start-failed",location.href,"no se pudo confirmar 0:00");
+        }
+        return false;
+      }
+      requestRewind(video,"inicio de captura");
+      return false;
+    }
+    capZeroReady=true;
+    if(capZeroLastStatus!=="confirmed"){
+      capZeroLastStatus="confirmed";
+      post("capture-zero",location.href,"posición "+current.toFixed(2)+"s");
+    }
+    return true;
+  }
   function capturePoll(){
     try{
       if(window.VideoDetectMonitor&&VideoDetectMonitor.postMessage)
@@ -94,6 +179,8 @@
     capCurrent=null;capPending=0;capSeq=0;capSending=false;
     capInitSent={audio:false,video:false};capWaitReported=false;
     capRecordingHeight=0;capBlocked=false;
+    capZeroReady=false;capZeroSeekPending=false;capZeroAttempt=0;
+    capZeroRetryAt=0;capZeroLastStatus="";
   }
   function capturePump(){
     if(capSending||!capSession||!capQueue.length)return;
@@ -204,7 +291,7 @@
           }
           if(capEnabled){
             selectPreferredQuality();
-            ensureInitialization();
+            if(prepareZeroStart())ensureInitialization();
           }
         }else if(m.cmd==="capture-ack"&&capCurrent&&m.seq===capPending&&m.session===capSession){
           if(m.ok){
@@ -271,11 +358,46 @@
         });
     }catch(e){}
   }
+
+  function inspectQualityConfiguration(){
+    try{
+      var host=(location.hostname||"").toLowerCase();
+      if(host.indexOf("xtremestream.xyz")<0)return;
+      qualityOptions().forEach(function(item){
+        post("quality-offered",location.href,item.height+"p");
+      });
+      document.querySelectorAll("script:not([src])").forEach(function(script){
+        var body=script.textContent||"";
+        if(body.length>1000000)return;
+        var matches=body.matchAll(/(?:["']?quality["']?|["']?resolution["']?|["']?label["']?|["']?sources["']?|["']?levels["']?)[^\n\r]{0,120}?(2160|1440|1080|720|480|360|240)\s*p?\b|(?:2160|1440|1080|720|480|360|240)_enc/gi);
+        var count=0;
+        for(var match of matches){
+          if(++count>18)break;
+          var resolution=match[1]||((match[0]||"").match(/(2160|1440|1080|720|480|360|240)_enc/)||[])[1];
+          if(resolution)post("quality-hint",location.href,resolution+"p");
+        }
+      });
+      if(typeof window.jwplayer==="function"){
+        try{
+          var instance=window.jwplayer();
+          var levels=instance&&instance.getQualityLevels&&instance.getQualityLevels();
+          if(Array.isArray(levels))levels.forEach(function(level){
+            var match=String(level.label||"").match(/(2160|1440|1080|720|480|360|240)/);
+            if(match)post("quality-offered",location.href,match[1]+"p");
+          });
+        }catch(e){}
+      }
+    }catch(e){}
+  }
+  [1500,3000,5000,8000,11000].forEach(function(ms){
+    setTimeout(inspectQualityConfiguration,ms);
+  });
   setInterval(inspectOfferedQualities,1800);
   function start(){
     try{
       scan();
       inspectOfferedQualities();
+      inspectQualityConfiguration();
       new MutationObserver(function(items){
         items.forEach(function(item){
           if(item.type==="attributes")observeVideo(item.target);
@@ -351,8 +473,8 @@
           var isInit=rememberInit(track,bytes);
           var originalResult=originalAppend.apply(this,arguments);
           if(capEnabled){
-            ensureInitialization();
-            if(!isInit&&capInitSent.video&&capInitSent[track]){
+            if(prepareZeroStart())ensureInitialization();
+            if(!isInit&&capZeroReady&&capInitSent.video&&capInitSent[track]){
               if(!captured){
                 try{
                   if(bytes instanceof ArrayBuffer)captured=new Uint8Array(bytes).slice();
