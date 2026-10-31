@@ -8,7 +8,8 @@
 
   // Keep the most recent fMP4 initialization boxes even before recording.
   // This lets the user choose quality in the player BEFORE starting capture.
-  var capInitAudio=null,capInitVideo=null,capInitVideosByHeight={};
+  var capInitAudio=null,capInitVideo=null,capInitVideosByHeight={},capInitVideoHeight=0,
+      capRecordingHeight=0,capBlocked=false;
   var capInitSent={audio:false,video:false},capWaitReported=false;
   function mseInit(bytes){
     try{
@@ -45,6 +46,13 @@
     if(!ini)return false;
     if(track==="audio")capInitAudio=ini.bytes;
     else{
+      if(capEnabled&&capInitSent.video&&capRecordingHeight&&ini.height&&
+         ini.height!==capRecordingHeight&&!capBlocked){
+        capBlocked=true;capEnabled=false;
+        post("capture-integrity",location.href,
+            "La pista de video cambió de "+capRecordingHeight+"p a "+ini.height+"p");
+      }
+      capInitVideoHeight=ini.height;
       capInitVideo=ini.bytes;
       if(ini.height)capInitVideosByHeight[String(ini.height)]=ini.bytes;
       post("capture-init",location.href,"video init "+ini.height+"p");
@@ -58,6 +66,7 @@
         capInitVideosByHeight[String(capPreferredQuality)]||null;
       if(videoInit){
         capInitSent.video=true;
+        capRecordingHeight=capPreferredQuality==="auto"?capInitVideoHeight:parseInt(capPreferredQuality,10);
         captureBuffer("video",videoInit);
         post("capture-ready",location.href,"video inicial "+String(capPreferredQuality));
       }else if(!capWaitReported&&capPreferredQuality!=="auto"){
@@ -84,6 +93,7 @@
     capSession=session;capQueue=[];capQueuedBytes=0;
     capCurrent=null;capPending=0;capSeq=0;capSending=false;
     capInitSent={audio:false,video:false};capWaitReported=false;
+    capRecordingHeight=0;capBlocked=false;
   }
   function capturePump(){
     if(capSending||!capSession||!capQueue.length)return;
@@ -102,7 +112,11 @@
       VideoDetectMonitor.postMessage(JSON.stringify({
         kind:"capture-chunk",session:capSession,seq:capPending,track:item.track,base64:btoa(bin)
       }));
-    }catch(e){capEnabled=false;capSending=false;capQueue=[];capQueuedBytes=0;}
+    }catch(e){
+      capEnabled=false;capBlocked=true;
+      post("capture-integrity",location.href,"Error en envío binario del fragmento");
+      capSending=false;capQueue=[];capQueuedBytes=0;
+    }
   }
   function captureBuffer(track,bytes){
     if(!capEnabled||!capSession||!bytes)return;
@@ -112,7 +126,11 @@
       else if(ArrayBuffer.isView(bytes))view=new Uint8Array(bytes.buffer,bytes.byteOffset,bytes.byteLength);
       else return;
       if(!view.byteLength||view.byteLength>8*1024*1024)return;
-      if(capQueuedBytes+view.byteLength>capBufferLimit){capEnabled=false;return;}
+      if(capQueuedBytes+view.byteLength>capBufferLimit){
+        capEnabled=false;capBlocked=true;
+        post("capture-integrity",location.href,"Cola de datos llena; faltan fragmentos");
+        return;
+      }
       var copy=view.slice();
       capQueue.push({session:capSession,data:copy,track:track,position:0});
       capQueuedBytes+=copy.length;
@@ -177,7 +195,7 @@
           }
           if(Boolean(m.active)!==capEnabled)
             post("capture-state",location.href,Boolean(m.active)?"activa":"inactiva");
-          capEnabled=Boolean(m.active);
+          capEnabled=Boolean(m.active)&&!capBlocked;
           var preference=String(m.quality||"auto");
           if(preference!==capPreferredQuality){
             capPreferredQuality=preference;
@@ -194,7 +212,9 @@
             capSending=false;capCurrent=null;capPending=0;
             setTimeout(capturePump,0);
           }else{
-            capEnabled=false;capQueue=[];capQueuedBytes=0;
+            capEnabled=false;capBlocked=true;
+            post("capture-integrity",location.href,"Fragmento rechazado por Android");
+            capQueue=[];capQueuedBytes=0;
             capCurrent=null;capSending=false;capPending=0;
           }
         }
@@ -235,9 +255,27 @@
       });
     }catch(e){}
   }
+
+  // Inspect only DOM elements in the embedded video player. We cannot
+  // assert a rendition exists until its menu or CDN request exposes it.
+  function inspectOfferedQualities(){
+    try{
+      var host=location.hostname.toLowerCase();
+      if(host.indexOf("xtremestream.xyz")<0)return;
+      document.querySelectorAll("option,[role=option],[data-quality],.vjs-menu-item,.jw-settings-content-item,[class*=quality] li,[class*=quality] button")
+        .forEach(function(n){
+          var hint=[n.getAttribute("data-quality"),n.getAttribute("data-label"),
+                    n.getAttribute("value"),n.textContent||""].filter(Boolean).join(" ");
+          var m=hint.match(/(?:^|[^0-9])(2160|1440|1080|720|480|360|240)\s*p?(?=[^0-9]|$)/i);
+          if(m)post("quality-offered",location.href,m[1]+"p");
+        });
+    }catch(e){}
+  }
+  setInterval(inspectOfferedQualities,1800);
   function start(){
     try{
       scan();
+      inspectOfferedQualities();
       new MutationObserver(function(items){
         items.forEach(function(item){
           if(item.type==="attributes")observeVideo(item.target);
