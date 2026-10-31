@@ -356,7 +356,7 @@ public class MainActivity extends Activity {
         }
         java.util.Collections.sort(heights,java.util.Collections.reverseOrder());
         // Every resolution remains selectable; the site may expose 1080p only after Play.
-        for(Integer h:new Integer[]{2160,1440,1080,720,480,360,240})options.add(h.toString());
+        for(Integer h:new Integer[]{1080,720,480})options.add(h.toString());
         for(Integer h:heights)options.add(h.toString());
         String[] codes=options.toArray(new String[0]);
         String[] names=new String[codes.length];
